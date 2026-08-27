@@ -1,0 +1,7 @@
+.env
+data/
+dashboard.html
+__pycache__/
+*.pyc
+check_join.py
+Breww API documentation.yaml
