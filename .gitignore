@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 check_join.py
 Breww API documentation.yaml
+.DS_Store
+.vercel/*
+!.vercel/repo.json
+.env*
