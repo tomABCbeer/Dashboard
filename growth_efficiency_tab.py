@@ -256,7 +256,7 @@ def build_growth_efficiency_section(customers_df):
     var traces = topProducts.map(function(p, i) {{
       return {{
         x: labels, y: monthlySumForProduct(p), name: p,
-        type: 'bar', marker: {{color: beerColors[i % beerColors.length]}}
+        type: 'bar', marker: {{color: findConfiguredProductColor(p) || beerColors[i % beerColors.length]}}
       }};
     }});
     var otherTotal = Object.keys(totalsByProduct).reduce(function(s, n) {{

@@ -275,10 +275,18 @@ def build_customer_report_section():
       return months.map(function(mk) {{ return map[mk]; }});
     }}
 
+    // Computed once, shared between the bar chart below and the pie
+    // chart further down, so the same beer gets the same color in
+    // both places on this customer's page - not just matching the
+    // histogram on the Orders tab.
+    var topProductColors = topProducts.map(function(p, i) {{
+      return findConfiguredProductColor(p) || beerColors[i % beerColors.length];
+    }});
+
     var traces = topProducts.map(function(p, i) {{
       return {{
         x: labels, y: monthlySumForProduct(custLines, p), name: p,
-        type: 'bar', marker: {{color: beerColors[i % beerColors.length]}}
+        type: 'bar', marker: {{color: topProductColors[i]}}
       }};
     }});
     if (otherTotal > 0) {{
@@ -334,7 +342,7 @@ def build_customer_report_section():
 
     var pieLabels = topProducts.slice();
     var pieValues = topProducts.map(function(p) {{ return totalsByProduct[p]; }});
-    var pieColors = topProducts.map(function(p, i) {{ return beerColors[i % beerColors.length]; }});
+    var pieColors = topProductColors.slice();
     if (otherTotal > 0) {{
       pieLabels.push('Other');
       pieValues.push(otherTotal);

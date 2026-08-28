@@ -205,21 +205,50 @@ HISTOGRAM_MIN_SALES_UNITS = 10
 
 # Per-product bar/marker colors for the "All Products Sold" histogram
 # (and anywhere else products are individually colored). Breww's API
-# has no display-color field for products, so colors are normally
-# auto-assigned from a fixed palette based on each product's position
-# in your full, alphabetized product list - stable across filters, but
-# not something you control directly. Add entries here (product name
-# -> hex color, matching the name exactly as it appears in Breww) to
-# override that for specific products; anything not listed here still
-# falls back to the automatic assignment. For example:
+# has no display-color field for products - checked, the only "colour"
+# field anywhere in the spec is an unrelated numeric SRM/EBC brewing
+# measurement - so colors are normally auto-assigned from a fixed
+# palette based on each product's position in your full, alphabetized
+# product list, stable across filters but not something you control
+# directly. The entries below (pulled from drinkarlingtonbeer.com/beers)
+# override that for the products listed; anything not listed here still
+# falls back to the automatic assignment.
 #
-#   PRODUCT_COLORS = {
-#       "Spy-P-A - Regular": "#4CAF6B",
-#       "Trafford Ale - Regular": "#3F4B8C",
-#   }
+# IMPORTANT: these keys must match your product names EXACTLY as Breww
+# returns them (case-sensitive) - which is often not the bare beer name
+# shown on the website, but that name plus a package format, e.g.
+# "Spy-P-A - Keg" rather than just "Spy-P-A". Check the Orders tab's
+# Product filter dropdown (built from your real order-line data)
+# against this list before trusting it - any key that doesn't match
+# exactly just silently falls back to an auto-assigned color instead
+# of erroring, so a typo or format mismatch here is easy to miss
+# without checking.
 PRODUCT_COLORS = {
-    # "Spy-P-A - Regular": "#4CAF6B",
-    # "Trafford Ale - Regular": "#3F4B8C",
+    "Spy-P-A": "#79DBD4",
+    "Marley's Ghost": "#EB8D8A",
+    "Money Comes and Goes": "#55A980",
+    "Presita": "#FFC658",
+    "Jedermann": "#F3A7DB",
+    "First Love": "#E2B77E",
+    "Bike Path": "#C4B7BC",
+    "Foxy Librarian": "#CCCCCA",
+    "Trafford": "#76A7E7",
+    "Robbins Farmhouse": "#FFA489",
+    "My New GF": "#FF9422",
+    "Pierce Pils": "#C2A0D9",
+    "Oval Frame": "#74C3D5",
+    "Menotomator": "#133598",
+    "Time Only Goes": "#492274",
+    "Whittemore": "#79DBD4",
+    "Zwolf": "#9F6C3D",
+    "Double Dry Spy": "#79DBD4",
+    "Walter": "#6B6B5E",
+    "Stave 450": "#8A796F",
+    "My Juicy GF": "#FF9422",
+    "Pomellow": "#F25E56",
+    "Herring Run": "#FC7C55",
+    "Russell": "#DD6A0F",
+    "Reverse Swirly": "#E6AB1E",
 }
 
 # Breww drink batch status enum

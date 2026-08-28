@@ -141,6 +141,60 @@ function escapeHtml(s) {
 }
 
 // ---------------------------------------------------------------------
+// config.PRODUCT_COLORS, shared by every chart that colors individual
+// products (not just the Orders tab's histogram, which is where this
+// first got built). Read once, globally, from a script tag PAGE_TEMPLATE
+// embeds BEFORE this library's own <script> tag specifically so it's
+// already in the DOM by the time this runs - this library loads before
+// any tab's own content exists on the page, so it can't rely on the
+// tab-to-tab pattern elsewhere (a later tab reading an earlier tab's
+// embedded data) the way Customer Report/Forecast do for order data.
+// ---------------------------------------------------------------------
+var productColorOverrides = (function() {
+  var el = document.getElementById('product-color-overrides');
+  if (!el) return {};
+  try {
+    return JSON.parse(el.textContent) || {};
+  } catch (e) {
+    return {};
+  }
+})();
+
+// config.PRODUCT_COLORS is keyed by BEER name (e.g. "Spy-P-A"), but a
+// single beer is usually sold as several different Breww PRODUCTS (a
+// keg, a can, a growler, a differently-ordered legacy name like
+// "Case 24 x16oz Spy-P-A") - so a product matches a configured entry
+// whenever the beer name appears ANYWHERE in the product's full name,
+// not only as an exact match or only at the start. If a product name
+// contains more than one configured beer name, the longer, more
+// specific one wins.
+function findConfiguredProductColor(productName) {
+  var bestMatch = null;
+  Object.keys(productColorOverrides).forEach(function(beerName) {
+    if (productName.indexOf(beerName) !== -1) {
+      if (!bestMatch || beerName.length > bestMatch.length) {
+        bestMatch = beerName;
+      }
+    }
+  });
+  return bestMatch ? productColorOverrides[bestMatch] : null;
+}
+
+// Builds a name->color map for a given list of product names, using
+// each product's configured color where one matches, and otherwise
+// falling back to fallbackPalette cycled by that product's position in
+// allProductNames - so callers can pass whichever palette they already
+// use for their own chart (they don't all use the same one) and still
+// share the same override-matching logic.
+function buildProductColorMap(allProductNames, fallbackPalette) {
+  var map = {};
+  allProductNames.forEach(function(name, i) {
+    map[name] = findConfiguredProductColor(name) || fallbackPalette[i % fallbackPalette.length];
+  });
+  return map;
+}
+
+// ---------------------------------------------------------------------
 // Generic searchable, savable multi-select dropdown filter. One
 // implementation, shared by every filter on every tab (customer type,
 // order status, product, and now inventory item) instead of each tab

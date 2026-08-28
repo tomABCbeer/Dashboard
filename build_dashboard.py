@@ -5,6 +5,8 @@ Pulls together every tab (each in its own module) into one static,
 self-contained dashboard.html. Run fetch_data.py first to populate
 the data/ directory, then this script.
 """
+import json
+
 import pandas as pd
 
 import config
@@ -100,6 +102,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+<script id="product-color-overrides" type="application/json">{product_color_overrides_json}</script>
 <script>
 {shared_filter_lib_js}
 </script>
@@ -174,6 +177,7 @@ def main():
     html = PAGE_TEMPLATE.format(
         generated_at=pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
         shared_filter_lib_js=SHARED_FILTER_LIB_JS,
+        product_color_overrides_json=json.dumps(config.PRODUCT_COLORS),
         orders_html=build_orders_section(orders_df, customer_types_df, order_lines_df),
         batches_html=build_batches_section(batches_df),
         stock_html=build_stock_section(stock_df, products_df),

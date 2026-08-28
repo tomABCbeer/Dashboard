@@ -73,9 +73,21 @@ growth_efficiency_tab.py   — Growth & Efficiency
 
 `shared.py` includes the full client-side searchable-filter component
 (`createSearchableFilter` — search, select all/none, saved presets)
-as a single JS string, injected once at the top of the page rather
-than duplicated per tab. Every tab's Python module imports whichever
-pieces of `shared.py` it actually needs, so `pyflakes shared.py
+and the product-color matching logic (`findConfiguredProductColor`,
+`buildProductColorMap` — see "Product colors" below) as single JS
+strings, injected once at the top of the page rather than duplicated
+per tab. `PAGE_TEMPLATE` embeds `config.PRODUCT_COLORS` as a small
+JSON script tag *immediately before* that shared library's own
+`<script>` tag specifically so it's already parsed into the page by
+the time the library's top-level code reads it — this library loads
+before any tab's own content exists, so it can't rely on the
+tab-to-tab pattern used elsewhere (a later tab reading an earlier
+tab's embedded data, like Customer Report reading the Orders tab's
+order data) — if you ever move that JSON script tag elsewhere in
+`PAGE_TEMPLATE`, keep it ahead of the shared library's own script tag,
+or the color matching silently falls back to auto-assigned colors for
+everything. Every tab's Python module imports whichever pieces of
+`shared.py` it actually needs, so `pyflakes shared.py
 orders_tab.py batches_tab.py inventory_tab.py customer_report_tab.py
 forecast_tab.py growth_efficiency_tab.py build_dashboard.py` is a
 quick way to catch an unused or missing import after editing one.
@@ -130,28 +142,59 @@ to change the starting point everywhere at once.
 
 Breww's API has no per-product display-color field (checked directly
 against the spec — the only "colour" field anywhere in it is an
-unrelated numeric brewing measurement), so by default every product on
-the "All Products Sold" chart gets a color assigned automatically from
-a fixed palette, based on its position in your full, alphabetized
-product list. That assignment is stable — a product keeps its color
-across filter and date range changes — but it isn't something you
-control directly.
+unrelated numeric brewing measurement), so by default any product not
+explicitly configured gets a color assigned automatically from a fixed
+palette, based on its position in an alphabetized product list. That
+assignment is stable — a product keeps its color across filter and
+date range changes — but it isn't something you control directly.
 
-To pin specific products to specific colors instead, add them to
-`config.PRODUCT_COLORS`:
+To pin specific colors instead, add them to `config.PRODUCT_COLORS`,
+keyed by **beer name** (e.g. from your own site's color scheme), not
+the full Breww product name:
 
 ```python
 PRODUCT_COLORS = {
-    "Spy-P-A - Regular": "#4CAF6B",
-    "Trafford Ale - Regular": "#3F4B8C",
+    "Spy-P-A": "#79DBD4",
+    "Trafford": "#76A7E7",
 }
 ```
 
-The product name has to match exactly what's in your Breww order-line
-data (case-sensitive) — usually the same name you see elsewhere on the
-dashboard's product filters. Any product not listed here still falls
-back to the automatic assignment, so you only need to add entries for
-the ones you actually want to control.
+This is keyed by beer, not by product, on purpose — one beer is
+usually sold as several different Breww *products* (a keg, a can, a
+growler, each its own line item with its own full name, like
+"Spy-P-A - Keg"), and you almost always want all of them sharing the
+same color rather than configuring each package format separately. A
+product matches a configured entry whenever its name **contains that
+beer name anywhere** — "Spy-P-A - 1/2BBL Keg", "Spy-P-A 24 x 16oz
+can", and even a differently-ordered legacy name like
+"Case 24 x16oz Spy-P-A" (beer name at the *end*) all pick up the color
+configured under the single key `"Spy-P-A"`. A product whose name
+matches *no* configured beer still falls back to the automatic
+assignment, so you only need entries for the beers you actually want
+to control, and if a product's name happens to contain more than one
+configured beer name, the longer, more specific one wins.
+
+Worth knowing: matching *anywhere* in the name (rather than only at
+the start) is deliberately loose, to handle real product names that
+don't put the beer name first — which also means it's a little more
+prone to an unintended match than a stricter check would be, if a
+configured beer name happens to be a common word or substring that
+shows up somewhere in an unrelated product's name too. Worth a glance
+around the dashboard after adding a new entry to confirm nothing else
+picked up its color unexpectedly.
+
+This one setting affects every chart that colors individual products,
+not just the Orders tab's "All Products Sold" histogram — the same
+`findConfiguredProductColor()`/`buildProductColorMap()` logic (in
+`shared.py`, used by every tab) also drives "Sales by Month, by
+Product," "New Account Sales," the Customer Report tab's per-customer
+bar and pie charts, and the Inventory tab's "Current Inventory of
+Products by Location." Two things stay deliberately excluded: Stock
+Items charts (raw ingredients like hops and malt aren't beers, so
+`PRODUCT_COLORS` doesn't apply there at all), and Inventory's
+"On-Hand Quantity by Product" (top 10) chart, which stays a single
+uniform color on purpose — a ranking list where color doesn't add
+information the ranking doesn't already give you.
 
 **Production batches** (`/drink-batches/`, the `DrinkBatch` object)
 - Batch count, total volume brewed, average ABV — all-time

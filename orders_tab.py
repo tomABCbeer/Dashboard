@@ -142,7 +142,6 @@ def build_orders_section(df, customer_types_df, order_lines_df):
     stack_colors_json = json.dumps(STACK_COLORS)
     beer_colors_json = json.dumps(BEER_COLORS)
     histogram_colors_json = json.dumps(HISTOGRAM_COLORS)
-    product_colors_json = json.dumps(config.PRODUCT_COLORS)
 
     month_customer_type_html = filter_dropdown_html("month-customer-type", "Customer type", "customer types")
     month_order_status_html = filter_dropdown_html("month-order-status", "Order status", "statuses")
@@ -245,7 +244,6 @@ def build_orders_section(df, customer_types_df, order_lines_df):
   var beerColors = {beer_colors_json};
   var beerTopN = {BEER_TOP_N};
   var histogramColors = {histogram_colors_json};
-  var productColorOverrides = {product_colors_json};
   var histogramMinSalesValue = {config.HISTOGRAM_MIN_SALES_VALUE};
   var histogramMinSalesUnits = {config.HISTOGRAM_MIN_SALES_UNITS};
   var monthNames = {json.dumps(MONTH_NAMES)};
@@ -259,16 +257,13 @@ def build_orders_section(df, customer_types_df, order_lines_df):
 
   var defaultCustomerTypesFiltered = defaultCustomerTypes.filter(function(t) {{ return allCustomerTypes.indexOf(t) !== -1; }});
 
-  // Per-product color: config.PRODUCT_COLORS wins if a product is
-  // listed there; anything not listed falls back to a stable
-  // automatic assignment based on the product's position in the full,
-  // alphabetically-sorted product list, so a given product's color
-  // never changes just because a filter or date range change alters
-  // which products are visible or in what order.
-  var productColorMap = {{}};
-  allProductNames.forEach(function(name, i) {{
-    productColorMap[name] = productColorOverrides[name] || histogramColors[i % histogramColors.length];
-  }});
+  // findConfiguredProductColor()/buildProductColorMap() are global,
+  // shared by every chart on every tab that colors individual
+  // products - see shared.py. This histogram's per-bar color is
+  // stable across filter/date range changes because it's built once
+  // here from the FULL product list, not recomputed from whatever's
+  // currently visible.
+  var productColorMap = buildProductColorMap(allProductNames, histogramColors);
 
 
   function filterOrdersForMonth(state) {{
@@ -416,7 +411,7 @@ def build_orders_section(df, customer_types_df, order_lines_df):
     var traces = topBeers.map(function(beerName, i) {{
       return {{
         x: monthNames, y: monthlySumForBeer(lineRows, thisYear, beerName), name: beerName,
-        type: 'bar', marker: {{color: beerColors[i % beerColors.length]}}
+        type: 'bar', marker: {{color: findConfiguredProductColor(beerName) || beerColors[i % beerColors.length]}}
       }};
     }});
 

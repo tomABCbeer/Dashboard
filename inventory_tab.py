@@ -443,7 +443,7 @@ def build_products_subsection(products_df):
       return {{
         x: locations,
         y: locations.map(function(loc) {{ return (byLocation[loc] && byLocation[loc][item]) || 0; }}),
-        name: item, type: 'bar', marker: {{color: itemColors[i % itemColors.length]}}
+        name: item, type: 'bar', marker: {{color: findConfiguredProductColor(item) || itemColors[i % itemColors.length]}}
       }};
     }});
 

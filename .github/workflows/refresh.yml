@@ -39,7 +39,7 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          DEPLOY_URL=$(vercel deploy --token=$VERCEL_TOKEN --yes)
+          DEPLOY_URL=$(vercel deploy --token=$VERCEL_TOKEN --scope arlingtonbrewingcompany --yes)
           echo "Deployed to: $DEPLOY_URL"
           echo "deploy_url=$DEPLOY_URL" >> "$GITHUB_OUTPUT"
 
@@ -47,7 +47,7 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          vercel alias set ${{ steps.deploy.outputs.deploy_url }} dashboard-abco-live.vercel.app --token=$VERCEL_TOKEN
+          vercel alias set ${{ steps.deploy.outputs.deploy_url }} dashboard-abco-live.vercel.app --token=$VERCEL_TOKEN --scope arlingtonbrewingcompany
 
       - name: SECURITY CHECK - verify the dashboard is NOT publicly accessible
         run: |
