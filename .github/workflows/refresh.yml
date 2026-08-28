@@ -28,10 +28,15 @@ jobs:
       - name: Build the dashboard
         run: python build_dashboard.py
 
+      - name: Prepare a clean deploy folder
+        run: |
+          mkdir -p deploy_output
+          cp dashboard.html deploy_output/index.html
+
       - name: Install Vercel CLI
         run: npm install -g vercel
 
       - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: vercel deploy --prod --token=$VERCEL_TOKEN --yes
+        run: vercel deploy deploy_output --prod --token=$VERCEL_TOKEN --yes
