@@ -174,16 +174,18 @@ def main():
     packagings_df = load_csv("planned_packagings")
     customers_df = load_csv("customers_suppliers")
 
+    generated_at_et = pd.Timestamp.now(tz="UTC").tz_convert("America/New_York").strftime("%Y-%m-%d %H:%M %Z")
+
     html = PAGE_TEMPLATE.format(
-        generated_at=pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+        generated_at=generated_at_et,
         shared_filter_lib_js=SHARED_FILTER_LIB_JS,
         product_color_overrides_json=json.dumps(config.PRODUCT_COLORS),
         orders_html=build_orders_section(orders_df, customer_types_df, order_lines_df),
         batches_html=build_batches_section(batches_df),
         stock_html=build_stock_section(stock_df, products_df),
-        customer_report_html=build_customer_report_section(),
+        customer_report_html=build_customer_report_section(customers_df),
         forecast_html=build_forecast_section(fulfillments_df, packagings_df),
-        growth_efficiency_html=build_growth_efficiency_section(customers_df),
+        growth_efficiency_html=build_growth_efficiency_section(),
     )
 
     with open(config.OUTPUT_HTML, "w") as f:

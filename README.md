@@ -265,7 +265,9 @@ Any section with missing data still renders — it'll just show fewer
 charts and a note.
 
 **Customer Report** (a new tab, built entirely from the same order and
-order-line data as the Orders tab — no new endpoint needed)
+order-line data as the Orders tab, plus `/customers-suppliers/` for
+the Invoice Aging and Dormant Customers tables' contact info — no
+other new endpoint needed)
 
 Pick a customer from the searchable dropdown and it generates a
 two-chart report for just that customer:
@@ -312,6 +314,49 @@ just tracking how many customers of that type happened to place an
 order in a given month. If the customer's own type has no other
 orders in the range, the line simply won't appear for that report.
 
+#### Invoice Aging table
+
+Below the two charts, independent of whichever customer you've
+selected above: every **unpaid** invoice (`amount_due > 0`) that's
+more than a configurable number of days **past its due date**
+(default 30, editable directly on the table) — not days since it was
+issued. An invoice that isn't due yet never appears, no matter how old
+it is; this is standard accounts-receivable "aging," measured from the
+due date, not the issue date. Columns: customer, invoice number, due
+date, and a contact name/phone/email — picked using the same priority
+logic as the Dormant Customers table below (see that section for the
+exact rule). Sorted most-overdue-first by default; click any column
+header to resort, same sortable-header component used throughout the
+dashboard.
+
+#### Dormant Customers table
+
+Below Invoice Aging: customers whose last invoiced order is older
+than a configurable window (default 60 days, editable directly on the
+table), sorted oldest-first. A **Has ordered before / Never ordered**
+toggle switches to an entirely different population: customers who
+show up in your Breww account but have never placed an invoiced order
+at all (sorted alphabetically instead, since there's no order date to
+sort by). **The Customer Type filter doesn't apply in "Never ordered"
+mode** — Breww only tracks customer type on individual orders, so a
+customer with zero orders has no order to derive a type from; a note
+appears above the table explaining this when that toggle is active.
+Columns: customer name, last order date, the specific products on
+*that* order (not their order history in general — matched by order
+ID, so two orders placed the same day never get conflated), total
+sales in the trailing 12 months, and a contact name/phone/email.
+
+Contact selection (used by both this table and Invoice Aging above)
+follows a priority order, since Breww has no structured "primary
+contact" flag, only free-text tags on each contact:
+`config.CONTACT_TAG_MARKETING` ("Receives B2B marketing emails") wins
+if any contact has it, then `config.CONTACT_TAG_INVOICES` ("Receives
+invoice emails"), then the business's own
+`primary_email`/`primary_phone_number` if no contact matches either
+tag — in that last case the name column shows "[No contact names
+available - business contact displayed]" rather than being left
+blank, so it's clear at a glance that no named person was found.
+
 **Forecast** (a new tab, combines `/products/`, `/planned-packagings/`,
 `/fulfillments/`, and the same order-line data as the other tabs — the
 first two are new endpoints, added specifically for this tab)
@@ -357,15 +402,14 @@ values to zero — a dip below the line at zero is a genuine projected
 stockout worth planning around.
 
 **Growth & Efficiency** (a new tab, built entirely from data already
-embedded by the Orders tab, plus a new `/customers-suppliers/`
-endpoint for contact info)
+embedded by the Orders tab)
 
-All three items below only count **Invoiced** orders — Draft,
-Confirmed, Cancelled, and Completed-no-invoice orders are ignored
-throughout, both for defining a customer's "first order" and for
-counting revenue. All three also default their Customer Type filter
-to the same set: `config.DEFAULT_CUSTOMER_TYPES` (Hotel / Shop / Club
-/ Bar-Restaurant).
+Both items below only count **Invoiced** orders — Draft, Confirmed,
+Cancelled, and Completed-no-invoice orders are ignored throughout,
+both for defining a customer's "first order" and for counting
+revenue. Both also default their Customer Type filter to the same
+set: `config.DEFAULT_CUSTOMER_TYPES` (Hotel / Shop / Club /
+Bar-Restaurant).
 
 - **New Account Sales** — a monthly dual-axis chart: stacked bars
   (left axis; top 7 products by value, everything else grouped into
@@ -394,39 +438,11 @@ to the same set: `config.DEFAULT_CUSTOMER_TYPES` (Hotel / Shop / Club
   the line is the point: if both climb together, growth is coming from
   adding accounts; if the bar climbs while the line doesn't, existing
   accounts are spending more.
-- **Dormant Customers table** — customers whose last invoiced order is
-  older than a configurable window (default 60 days, editable
-  directly on the table), sorted oldest-first by default. **Every
-  column header is clickable to sort by that column** — click once to
-  sort ascending (or, for the Sales column, descending — numbers start
-  high-to-low since that's usually the more useful first view of a
-  revenue figure), click the same header again to flip direction; an
-  arrow next to the header shows which column is currently active and
-  which way. A **Has ordered before / Never ordered** toggle switches
-  to an entirely different population: customers who show up in your
-  Breww account but have never placed an invoiced order at all
-  (defaults back to alphabetical-by-name when you switch into this
-  mode, since there's no order date to sort by — switching population
-  modes always resets the sort to that mode's own default, so a custom
-  sort choice doesn't carry over somewhere it wouldn't make sense).
-  **The Customer Type filter doesn't apply in "Never ordered" mode** —
-  Breww only tracks customer type on individual orders, so a customer
-  with zero orders has no order to derive a type from; a note appears
-  above the table explaining this when that toggle is active. Columns:
-  customer name, last order date, the specific products on *that*
-  order (not their order history in general — matched by order ID, so
-  two orders placed the same day never get conflated), total sales in
-  the trailing 12 months, and a contact name/phone/email.
 
-  Contact selection follows a priority order, since Breww has no
-  structured "primary contact" flag, only free-text tags on each
-  contact: `config.CONTACT_TAG_MARKETING` ("Receives B2B marketing
-  emails") wins if any contact has it, then `config.CONTACT_TAG_INVOICES`
-  ("Receives invoice emails"), then the business's own
-  `primary_email`/`primary_phone_number` if no contact matches either
-  tag — in that last case the name column shows "[No contact names
-  available - business contact displayed]" rather than being left
-  blank, so it's clear at a glance that no named person was found.
+The Dormant Customers table that used to sit here has moved to the
+Customer Report tab, under the new Invoice Aging table — see that
+section above; both are about specific customers' payment/order
+history, so they fit better there than among these two growth charts.
 
 ## Filtering the three Orders charts
 

@@ -1,12 +1,80 @@
-"""Customer Report tab: pick a customer, see their sales-by-month and
-product mix. Reads the Orders tab's already-embedded order-line data
-by DOM element id at runtime, rather than embedding its own copy."""
+"""Customer Report tab: pick a customer and see their sales-by-month
+and product mix, an Invoice Aging table, and a Dormant Customers table
+(moved here from Growth & Efficiency, since both are customer-specific
+concerns). Reads the Orders tab's already-embedded order data by DOM
+element id at runtime, rather than embedding a second copy."""
 import json
 
-from shared import BEER_TOP_N, BEER_COLORS
+import config
+from shared import BEER_TOP_N, BEER_COLORS, json_safe, _parse_json_list, filter_dropdown_html
 
-def build_customer_report_section():
+
+def prepare_customer_records(customers_df):
+    """Build JSON-serializable per-customer contact records, from
+    /customers-suppliers/, for the Invoice Aging and Dormant Customers
+    tables. Picks one contact per customer using
+    config.CONTACT_TAG_MARKETING then config.CONTACT_TAG_INVOICES (in
+    that priority order - Breww has no structured "primary contact"
+    flag, only free-text tags), falling back to the business's own
+    primary_email/primary_phone_number with no contact name (there's
+    no person to name in that case) if neither tag matches, or the
+    account has no contacts at all.
+
+    This endpoint has no Hotel/Shop/Club-style customer type field, so
+    that's deliberately not resolved here - the Dormant Customers
+    table's JS resolves it from order data instead (where available),
+    since a customer with zero orders ever can't be typed at all
+    either way."""
+    if customers_df is None:
+        return []
+
+    d = customers_df.copy()
+
+    records = []
+    for _, row in d.iterrows():
+        contacts = _parse_json_list(row.get("contacts"))
+        business_email = row.get("primary_email")
+        business_phone = row.get("primary_phone_number")
+
+        chosen = None
+        for tag_wanted in (config.CONTACT_TAG_MARKETING, config.CONTACT_TAG_INVOICES):
+            for c in contacts:
+                if not isinstance(c, dict):
+                    continue
+                tags = c.get("tags")
+                if isinstance(tags, list) and tag_wanted in tags:
+                    chosen = c
+                    break
+            if chosen is not None:
+                break
+
+        if chosen is not None:
+            first = (chosen.get("first_name") or "").strip()
+            last = (chosen.get("last_name") or "").strip()
+            contact_name = (first + " " + last).strip() or None
+            contact_email = chosen.get("primary_email") or business_email
+            contact_phone = chosen.get("primary_phone_number") or business_phone
+        else:
+            contact_name = "[No contact names available - business contact displayed]"
+            contact_email = business_email
+            contact_phone = business_phone
+
+        records.append({
+            "customer_id": json_safe(row.get("id")),
+            "customer_name": json_safe(row.get("name")),
+            "contact_name": json_safe(contact_name),
+            "contact_email": json_safe(contact_email),
+            "contact_phone": json_safe(contact_phone),
+        })
+    return records
+
+
+def build_customer_report_section(customers_df):
     beer_colors_json = json.dumps(BEER_COLORS)
+    customer_records = prepare_customer_records(customers_df)
+    customer_records_json = json.dumps(customer_records, allow_nan=False)
+    default_types_json = json.dumps(config.DEFAULT_CUSTOMER_TYPES)
+    dormant_type_html = filter_dropdown_html("growth-dormant-customer-type", "Customer type", "customer types")
 
     return f"""
 <h2>Customer Report</h2>
@@ -61,15 +129,68 @@ def build_customer_report_section():
   </div>
 </div>
 
+<h3>Invoice Aging</h3>
+<p class="section-note">Customers with an unpaid invoice more than the configured number of days past its due date - an invoice that isn't due yet never counts, no matter how old. Sorted most-overdue-first by default; click any column header to resort.</p>
+<div class="chart-scoped-filter" id="invoice-aging-filters">
+  <div class="filter-group">
+    <label>Show invoices more than (days) past due</label>
+    <input type="number" id="invoice-aging-window" min="0" value="{config.INVOICE_AGING_DEFAULT_DAYS}" style="width:80px;">
+  </div>
+  <div class="filter-actions">
+    <button id="btn-reset-invoice-aging-filters">Reset</button>
+  </div>
+</div>
+<div class="table-wrap">
+  <table class="data-table" id="invoice-aging-table"></table>
+</div>
+
+<h3>Dormant Customers</h3>
+<p class="section-note">Customers whose last invoiced order is older than the configured window, or who've never ordered at all - sorted oldest-first by default; click any column header to resort.</p>
+<div class="chart-scoped-filter" id="growth-dormant-filters">
+{dormant_type_html}
+  <div class="filter-group">
+    <label>Dormancy window (days)</label>
+    <input type="number" id="growth-dormant-window" min="1" value="{config.DORMANT_CUSTOMER_WINDOW_DEFAULT_DAYS}" style="width:80px;">
+  </div>
+  <div class="filter-group">
+    <label>Population</label>
+    <div class="unit-toggle" id="growth-dormant-population-toggle">
+      <button type="button" class="active" data-population="has-ordered">Has ordered before</button>
+      <button type="button" data-population="never-ordered">Never ordered</button>
+    </div>
+  </div>
+  <div class="filter-actions">
+    <button id="btn-reset-growth-dormant-filters">Reset</button>
+  </div>
+</div>
+<p id="growth-dormant-type-note" class="section-note" style="display:none;">Customer Type filter doesn't apply to "Never ordered" - Breww only tracks customer type on individual orders, so a customer with no orders can't be classified.</p>
+<div class="table-wrap">
+  <table class="data-table" id="growth-dormant-table"></table>
+</div>
+
+<script id="customer-contact-data" type="application/json">{customer_records_json}</script>
 <script>
 (function() {{
+  var rawData = JSON.parse(document.getElementById('orders-data').textContent);
   var lineDataEl = document.getElementById('order-line-data');
   var lineData = [];
   try {{ lineData = lineDataEl ? JSON.parse(lineDataEl.textContent) : []; }} catch (e) {{ lineData = []; }}
+  var rawLineData = lineData;
+
+  var contactDataEl = document.getElementById('customer-contact-data');
+  var contactData = [];
+  try {{ contactData = contactDataEl ? JSON.parse(contactDataEl.textContent) : []; }} catch (e) {{ contactData = []; }}
+  var contactByCustomerId = {{}};
+  contactData.forEach(function(c) {{ contactByCustomerId[c.customer_id] = c; }});
 
   var beerColors = {beer_colors_json};
   var beerTopN = {BEER_TOP_N};
   var avgLineColor = '#B0B0B0';
+
+  var allCustomerTypes = Array.from(new Set(rawData.map(function(r) {{ return r.customer_type_name; }})
+    .filter(function(v) {{ return v; }}))).sort();
+  var defaultCustomerTypes = {default_types_json};
+  var defaultCustomerTypesFiltered = defaultCustomerTypes.filter(function(t) {{ return allCustomerTypes.indexOf(t) !== -1; }});
 
   var customersById = {{}};
   lineData.forEach(function(r) {{
@@ -188,18 +309,15 @@ def build_customer_report_section():
     var y = parts[0], m = parseInt(parts[1], 10);
     return MONTH_ABBR[m - 1] + ' ' + y;
   }}
-
   function buildMonthRange(startKey, endKey) {{
     var result = [];
-    var sParts = startKey.split('-').map(Number), eParts = endKey.split('-').map(Number);
-    var y = sParts[0], m = sParts[1];
-    var ey = eParts[0], em = eParts[1];
-    var guard = 0;
-    while ((y < ey || (y === ey && m <= em)) && guard < 1000) {{
-      result.push(y + '-' + (m < 10 ? '0' + m : String(m)));
+    if (!startKey || !endKey) return result;
+    var y = parseInt(startKey.slice(0, 4), 10), m = parseInt(startKey.slice(5, 7), 10);
+    var endY = parseInt(endKey.slice(0, 4), 10), endM = parseInt(endKey.slice(5, 7), 10);
+    while (y < endY || (y === endY && m <= endM)) {{
+      result.push(y + '-' + (m < 10 ? '0' : '') + m);
       m++;
       if (m > 12) {{ m = 1; y++; }}
-      guard++;
     }}
     return result;
   }}
@@ -360,28 +478,283 @@ def build_customer_report_section():
   }}
 
   buildCustomerList();
+
+  // ===================== Invoice Aging table =====================
+  var INVOICE_AGING_COLUMNS = [
+    {{key: 'customer_name', label: 'Customer', type: 'string'}},
+    {{key: 'invoice_number', label: 'Invoice Number', type: 'string'}},
+    {{key: 'due_date', label: 'Due Date', type: 'string'}},
+    {{key: 'contact_name', label: 'Contact Name', type: 'string'}},
+    {{key: 'contact_phone', label: 'Phone', type: 'string'}},
+    {{key: 'contact_email', label: 'Email', type: 'string'}}
+  ];
+
+  function invoiceAgingDefaultSort() {{
+    return {{column: 'due_date', ascending: true}};  // earliest due date = most overdue, first
+  }}
+
+  var invoiceAgingSortInit = invoiceAgingDefaultSort();
+  var invoiceAgingSortColumn = invoiceAgingSortInit.column;
+  var invoiceAgingSortAscending = invoiceAgingSortInit.ascending;
+
+  function sortGenericRows(rows, column, ascending, type) {{
+    return rows.slice().sort(function(a, b) {{
+      if (type === 'number') {{
+        var an = a[column] || 0, bn = b[column] || 0;
+        return ascending ? an - bn : bn - an;
+      }}
+      var as = (a[column] || '').toString().toLowerCase();
+      var bs = (b[column] || '').toString().toLowerCase();
+      if (as < bs) return ascending ? -1 : 1;
+      if (as > bs) return ascending ? 1 : -1;
+      return 0;
+    }});
+  }}
+
+  function buildSortableHeaderRow(columns, sortColumn, sortAscending) {{
+    var cells = columns.map(function(col) {{
+      var indicator = '';
+      if (sortColumn === col.key) {{
+        indicator = sortAscending ? ' \\u25b2' : ' \\u25bc';
+      }}
+      return '<th><button type="button" class="sort-header-btn" data-sort-key="' + col.key + '">' +
+        escapeHtml(col.label) + indicator + '</button></th>';
+    }}).join('');
+    return '<thead><tr>' + cells + '</tr></thead>';
+  }}
+
+  function applyInvoiceAging() {{
+    var windowInput = document.getElementById('invoice-aging-window');
+    var windowDays = parseInt(windowInput.value, 10);
+    if (isNaN(windowDays) || windowDays < 0) windowDays = {config.INVOICE_AGING_DEFAULT_DAYS};
+    var todayKey = new Date().toISOString().slice(0, 10);
+    var todayDate = new Date(todayKey + 'T00:00:00Z');
+
+    var rows = [];
+    rawData.forEach(function(r) {{
+      if (r.order_status_label !== 'Invoiced') return;
+      if (!(r.amount_due > 0)) return;
+      if (!r.due_date) return;
+      var dueDate = new Date(r.due_date + 'T00:00:00Z');
+      var daysPastDue = Math.floor((todayDate - dueDate) / 86400000);
+      if (daysPastDue < windowDays) return;  // not overdue by at least X days (includes not-yet-due, which is negative)
+
+      var contact = contactByCustomerId[r.customer_id];
+      rows.push({{
+        customer_name: r.customer_name,
+        invoice_number: r.number,
+        due_date: r.due_date,
+        contact_name: contact ? contact.contact_name : '',
+        contact_phone: contact ? contact.contact_phone : '',
+        contact_email: contact ? contact.contact_email : ''
+      }});
+    }});
+
+    var sortColDef = INVOICE_AGING_COLUMNS.find(function(c) {{ return c.key === invoiceAgingSortColumn; }}) || INVOICE_AGING_COLUMNS[2];
+    rows = sortGenericRows(rows, invoiceAgingSortColumn, invoiceAgingSortAscending, sortColDef.type);
+
+    var bodyRows = rows.map(function(r) {{
+      return '<tr>' +
+        '<td>' + escapeHtml(r.customer_name) + '</td>' +
+        '<td>' + escapeHtml(r.invoice_number) + '</td>' +
+        '<td>' + escapeHtml(r.due_date) + '</td>' +
+        '<td>' + escapeHtml(r.contact_name || '') + '</td>' +
+        '<td>' + escapeHtml(r.contact_phone || '') + '</td>' +
+        '<td>' + escapeHtml(r.contact_email || '') + '</td>' +
+        '</tr>';
+    }}).join('');
+    document.getElementById('invoice-aging-table').innerHTML =
+      buildSortableHeaderRow(INVOICE_AGING_COLUMNS, invoiceAgingSortColumn, invoiceAgingSortAscending) + '<tbody>' + bodyRows + '</tbody>';
+  }}
+
+  document.getElementById('invoice-aging-table').addEventListener('click', function(e) {{
+    var btn = e.target.closest('[data-sort-key]');
+    if (!btn) return;
+    var key = btn.getAttribute('data-sort-key');
+    if (invoiceAgingSortColumn === key) {{
+      invoiceAgingSortAscending = !invoiceAgingSortAscending;
+    }} else {{
+      invoiceAgingSortColumn = key;
+      invoiceAgingSortAscending = true;
+    }}
+    applyInvoiceAging();
+  }});
+  document.getElementById('invoice-aging-window').addEventListener('change', applyInvoiceAging);
+  document.getElementById('btn-reset-invoice-aging-filters').addEventListener('click', function() {{
+    document.getElementById('invoice-aging-window').value = {config.INVOICE_AGING_DEFAULT_DAYS};
+    var resetSort = invoiceAgingDefaultSort();
+    invoiceAgingSortColumn = resetSort.column;
+    invoiceAgingSortAscending = resetSort.ascending;
+    applyInvoiceAging();
+  }});
+
+  // ===================== Dormant Customers table =====================
+  var dormantCustomerTypeFilter = createSearchableFilter({{
+    prefix: 'growth-dormant-customer-type', allValues: allCustomerTypes, defaultValues: defaultCustomerTypesFiltered,
+    presetsKey: 'abco_dashboard_shared_presets_customer_type_v1',
+    onApply: function() {{ applyDormantTable(); }}
+  }});
+  var dormantPopulationMode = 'has-ordered';
+
+  var DORMANT_COLUMNS = [
+    {{key: 'customer_name', label: 'Customer', type: 'string'}},
+    {{key: 'last_order_date', label: 'Last Order Date', type: 'string'}},
+    {{key: 'last_order_products', label: 'Last Order Products', type: 'string'}},
+    {{key: 'sales_last_12mo', label: 'Sales (Last 12mo)', type: 'number'}},
+    {{key: 'contact_name', label: 'Contact Name', type: 'string'}},
+    {{key: 'contact_phone', label: 'Phone', type: 'string'}},
+    {{key: 'contact_email', label: 'Email', type: 'string'}}
+  ];
+
+  function dormantDefaultSort(mode) {{
+    return mode === 'has-ordered'
+      ? {{column: 'last_order_date', ascending: true}}
+      : {{column: 'customer_name', ascending: true}};
+  }}
+
+  var dormantInitialSort = dormantDefaultSort(dormantPopulationMode);
+  var dormantSortColumn = dormantInitialSort.column;
+  var dormantSortAscending = dormantInitialSort.ascending;
+
+  function applyDormantTable() {{
+    var windowInput = document.getElementById('growth-dormant-window');
+    var windowDays = parseInt(windowInput.value, 10);
+    if (!windowDays || windowDays < 1) windowDays = {config.DORMANT_CUSTOMER_WINDOW_DEFAULT_DAYS};
+    var selectedTypes = dormantCustomerTypeFilter.getSelected();
+    var typeNote = document.getElementById('growth-dormant-type-note');
+    var todayKey = new Date().toISOString().slice(0, 10);
+    var cutoffDate = new Date(todayKey + 'T00:00:00Z');
+    var yearAgoKey = new Date(cutoffDate.getTime() - 365 * 86400000).toISOString().slice(0, 10);
+
+    var lastInvoicedByCustomer = {{}};
+    rawLineData.forEach(function(r) {{
+      if (r.order_status_label !== 'Invoiced') return;
+      if (!r.issue_date) return;
+      var existing = lastInvoicedByCustomer[r.customer_id];
+      if (!existing || r.issue_date > existing.issue_date ||
+          (r.issue_date === existing.issue_date && r.order_id > existing.order_id)) {{
+        lastInvoicedByCustomer[r.customer_id] = {{
+          issue_date: r.issue_date, order_id: r.order_id,
+          customer_name: r.customer_name, customer_type_name: r.customer_type_name
+        }};
+      }}
+    }});
+
+    var salesLast12moByCustomer = {{}};
+    rawData.forEach(function(r) {{
+      if (r.order_status_label !== 'Invoiced') return;
+      if (!r.issue_date) return;
+      if (r.issue_date < yearAgoKey || r.issue_date > todayKey) return;
+      salesLast12moByCustomer[r.customer_id] = (salesLast12moByCustomer[r.customer_id] || 0) + (r.value || 0);
+    }});
+
+    var rows = [];
+
+    if (dormantPopulationMode === 'has-ordered') {{
+      typeNote.style.display = 'none';
+      Object.keys(lastInvoicedByCustomer).forEach(function(cid) {{
+        var info = lastInvoicedByCustomer[cid];
+        if (selectedTypes.indexOf(info.customer_type_name) === -1) return;
+        var lastDate = new Date(info.issue_date + 'T00:00:00Z');
+        var daysSince = Math.floor((cutoffDate - lastDate) / 86400000);
+        if (daysSince < windowDays) return;
+
+        var products = Array.from(new Set(rawLineData
+          .filter(function(r) {{ return r.order_id === info.order_id; }})
+          .map(function(r) {{ return r.product_name; }})
+          .filter(function(v) {{ return v; }})));
+        var contact = contactByCustomerId[cid];
+
+        rows.push({{
+          customer_name: info.customer_name,
+          last_order_date: info.issue_date,
+          last_order_products: products.join(', '),
+          sales_last_12mo: salesLast12moByCustomer[cid] || 0,
+          contact_name: contact ? contact.contact_name : '',
+          contact_phone: contact ? contact.contact_phone : '',
+          contact_email: contact ? contact.contact_email : ''
+        }});
+      }});
+    }} else {{
+      typeNote.style.display = '';
+      var everOrderedIds = new Set(
+        rawData.filter(function(r) {{ return r.order_status_label === 'Invoiced'; }})
+          .map(function(r) {{ return r.customer_id; }})
+      );
+      contactData.forEach(function(c) {{
+        if (everOrderedIds.has(c.customer_id)) return;
+        rows.push({{
+          customer_name: c.customer_name,
+          last_order_date: '',
+          last_order_products: '',
+          sales_last_12mo: 0,
+          contact_name: c.contact_name,
+          contact_phone: c.contact_phone,
+          contact_email: c.contact_email
+        }});
+      }});
+    }}
+
+    var sortColDef = DORMANT_COLUMNS.find(function(c) {{ return c.key === dormantSortColumn; }}) || DORMANT_COLUMNS[1];
+    rows = sortGenericRows(rows, dormantSortColumn, dormantSortAscending, sortColDef.type);
+
+    var bodyRows = rows.map(function(r) {{
+      return '<tr>' +
+        '<td>' + escapeHtml(r.customer_name) + '</td>' +
+        '<td>' + escapeHtml(r.last_order_date || '\\u2014') + '</td>' +
+        '<td>' + escapeHtml(r.last_order_products || '\\u2014') + '</td>' +
+        '<td>$' + Math.round(r.sales_last_12mo).toLocaleString() + '</td>' +
+        '<td>' + escapeHtml(r.contact_name || '') + '</td>' +
+        '<td>' + escapeHtml(r.contact_phone || '') + '</td>' +
+        '<td>' + escapeHtml(r.contact_email || '') + '</td>' +
+        '</tr>';
+    }}).join('');
+    document.getElementById('growth-dormant-table').innerHTML =
+      buildSortableHeaderRow(DORMANT_COLUMNS, dormantSortColumn, dormantSortAscending) + '<tbody>' + bodyRows + '</tbody>';
+  }}
+
+  document.getElementById('growth-dormant-table').addEventListener('click', function(e) {{
+    var btn = e.target.closest('[data-sort-key]');
+    if (!btn) return;
+    var key = btn.getAttribute('data-sort-key');
+    if (dormantSortColumn === key) {{
+      dormantSortAscending = !dormantSortAscending;
+    }} else {{
+      dormantSortColumn = key;
+      var colDef = DORMANT_COLUMNS.find(function(c) {{ return c.key === key; }});
+      dormantSortAscending = colDef.type !== 'number';
+    }}
+    applyDormantTable();
+  }});
+
+  document.getElementById('growth-dormant-window').addEventListener('change', applyDormantTable);
+  document.getElementById('growth-dormant-population-toggle').addEventListener('click', function(e) {{
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    dormantPopulationMode = btn.getAttribute('data-population');
+    document.querySelectorAll('#growth-dormant-population-toggle button').forEach(function(b) {{
+      b.classList.toggle('active', b === btn);
+    }});
+    var def = dormantDefaultSort(dormantPopulationMode);
+    dormantSortColumn = def.column;
+    dormantSortAscending = def.ascending;
+    applyDormantTable();
+  }});
+  document.getElementById('btn-reset-growth-dormant-filters').addEventListener('click', function() {{
+    dormantCustomerTypeFilter.reset();
+    document.getElementById('growth-dormant-window').value = {config.DORMANT_CUSTOMER_WINDOW_DEFAULT_DAYS};
+    dormantPopulationMode = 'has-ordered';
+    document.querySelectorAll('#growth-dormant-population-toggle button').forEach(function(b) {{
+      b.classList.toggle('active', b.getAttribute('data-population') === 'has-ordered');
+    }});
+    var resetDef = dormantDefaultSort(dormantPopulationMode);
+    dormantSortColumn = resetDef.column;
+    dormantSortAscending = resetDef.ascending;
+    applyDormantTable();
+  }});
+
+  applyInvoiceAging();
+  applyDormantTable();
 }})();
 </script>
 """
-
-
-# ---------------------------------------------------------------------
-# Forecast tab: pick a product, see a projected inventory line over the
-# next 4 months, combining:
-#   - current stock (from the Products sub-section's data, /products/)
-#   - planned production (/planned-packagings/, packaged-product level,
-#     not the liquid/recipe level that /drink-batches/ tracks)
-#   - existing unfulfilled orders (/fulfillments/ where dispatched is
-#     false, each with a scheduled date and specific product/quantity)
-#   - a seasonal demand projection: last year's actual quantity for
-#     each of the next 4 calendar months, scaled by this year's
-#     year-over-year growth rate (this-year-to-date over the same
-#     period last year), with already-known unfulfilled orders for
-#     that month subtracted out first so a booked order never gets
-#     counted twice - once as itself, once as part of the historical
-#     pattern.
-#
-# This reuses the order-line and product-stock data already embedded
-# by the Orders and Inventory tabs (read by element id at runtime)
-# rather than embedding a third copy.
-# ---------------------------------------------------------------------

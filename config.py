@@ -187,6 +187,12 @@ DEFAULT_CUSTOMER_TYPES = ["Hotel", "Shop", "Club", "Bar / Restaurant"]
 NEW_ACCOUNT_WINDOW_DEFAULT_DAYS = 90
 DORMANT_CUSTOMER_WINDOW_DEFAULT_DAYS = 60
 
+# Default for the Customer Report tab's Invoice Aging table - shows
+# invoices that are unpaid (amount_due > 0) AND more than this many
+# days past their due date (not days since issued - an invoice that
+# isn't due yet never counts, no matter how old).
+INVOICE_AGING_DEFAULT_DAYS = 30
+
 # Tags used to pick which of a dormant customer's contacts to show, in
 # priority order (first match wins) - see the Dormant Customers table.
 # These are your account's own free-text contact tags (Breww has no

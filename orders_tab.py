@@ -27,6 +27,12 @@ def prepare_orders_records(df, customer_types_df):
     else:
         d["issue_date"] = None
 
+    if "due_date" in d.columns:
+        parsed_due = pd.to_datetime(d["due_date"], errors="coerce", utc=True)
+        d["due_date"] = parsed_due.dt.strftime("%Y-%m-%d")
+    else:
+        d["due_date"] = None
+
     d["order_status_label"] = d.get("order_status", pd.Series(dtype=float)).map(config.ORDER_STATUS_LABELS)
     d["payment_status_label"] = d.get("payment_status", pd.Series(dtype=float)).map(config.PAYMENT_STATUS_LABELS)
     d["customer_id"] = d.get("customer.id")
@@ -38,7 +44,7 @@ def prepare_orders_records(df, customer_types_df):
         else:
             d[col] = 0
 
-    out_cols = ["number", "issue_date", "customer_id", "customer_name", "customer_type_name",
+    out_cols = ["number", "issue_date", "due_date", "customer_id", "customer_name", "customer_type_name",
                 "order_status_label", "payment_status_label", "total", "value", "amount_due"]
     for col in out_cols:
         if col not in d.columns:
