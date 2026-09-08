@@ -10,7 +10,7 @@ import json
 import pandas as pd
 
 import config
-from shared import SHARED_FILTER_LIB_JS, load_csv
+from shared import SHARED_FILTER_LIB_JS, load_csv, build_product_drink_map, build_drink_id_name_map
 from orders_tab import build_orders_section
 from batches_tab import build_batches_section
 from inventory_tab import build_stock_section
@@ -103,6 +103,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <script id="product-color-overrides" type="application/json">{product_color_overrides_json}</script>
+<script id="product-drink-map" type="application/json">{product_drink_map_json}</script>
 <script>
 {shared_filter_lib_js}
 </script>
@@ -170,6 +171,7 @@ def main():
     customer_types_df = load_csv("customer_types")
     order_lines_df = load_csv("order_lines")
     products_df = load_csv("products")
+    drinks_df = load_csv("drinks")
     fulfillments_df = load_csv("fulfillments")
     packagings_df = load_csv("planned_packagings")
     customers_df = load_csv("customers_suppliers")
@@ -180,11 +182,12 @@ def main():
         generated_at=generated_at_et,
         shared_filter_lib_js=SHARED_FILTER_LIB_JS,
         product_color_overrides_json=json.dumps(config.PRODUCT_COLORS),
-        orders_html=build_orders_section(orders_df, customer_types_df, order_lines_df),
+        product_drink_map_json=json.dumps(build_product_drink_map(products_df, build_drink_id_name_map(drinks_df))),
+        orders_html=build_orders_section(orders_df, customer_types_df, order_lines_df, products_df),
         batches_html=build_batches_section(batches_df),
         stock_html=build_stock_section(stock_df, products_df),
         customer_report_html=build_customer_report_section(customers_df),
-        forecast_html=build_forecast_section(fulfillments_df, packagings_df),
+        forecast_html=build_forecast_section(fulfillments_df, packagings_df, products_df),
         growth_efficiency_html=build_growth_efficiency_section(),
     )
 

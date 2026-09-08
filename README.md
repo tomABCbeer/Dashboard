@@ -72,22 +72,29 @@ growth_efficiency_tab.py   — Growth & Efficiency
 ```
 
 `shared.py` includes the full client-side searchable-filter component
-(`createSearchableFilter` — search, select all/none, saved presets)
-and the product-color matching logic (`findConfiguredProductColor`,
-`buildProductColorMap` — see "Product colors" below) as single JS
-strings, injected once at the top of the page rather than duplicated
-per tab. `PAGE_TEMPLATE` embeds `config.PRODUCT_COLORS` as a small
-JSON script tag *immediately before* that shared library's own
-`<script>` tag specifically so it's already parsed into the page by
-the time the library's top-level code reads it — this library loads
-before any tab's own content exists, so it can't rely on the
-tab-to-tab pattern used elsewhere (a later tab reading an earlier
-tab's embedded data, like Customer Report reading the Orders tab's
-order data) — if you ever move that JSON script tag elsewhere in
-`PAGE_TEMPLATE`, keep it ahead of the shared library's own script tag,
-or the color matching silently falls back to auto-assigned colors for
-everything. Every tab's Python module imports whichever pieces of
-`shared.py` it actually needs, so `pyflakes shared.py
+(`createSearchableFilter` — search, select all/none, saved presets),
+the sortable-table component (`sortGenericRows`,
+`buildSortableHeaderRow` — used by Dormant Customers, Invoice Aging,
+and the Forecast tab's breakdown table), and the product-color/beer
+matching logic (`findConfiguredProductColor`, `buildProductColorMap`
+— see "Product colors" below) as single JS strings, injected once at
+the top of the page rather than duplicated per tab. On the Python
+side, `build_product_drink_map()` turns each product's
+`component_drinks` into a simple name → beer-name(s) lookup, used by
+both the color matching and the Forecast tab's beer-grouping.
+`PAGE_TEMPLATE` embeds `config.PRODUCT_COLORS` and that drink map as
+two small JSON script tags *immediately before* the shared library's
+own `<script>` tag specifically so both are already parsed into the
+page by the time the library's top-level code reads them — this
+library loads before any tab's own content exists, so it can't rely
+on the tab-to-tab pattern used elsewhere (a later tab reading an
+earlier tab's embedded data, like Customer Report reading the Orders
+tab's order data) — if you ever move either JSON script tag elsewhere
+in `PAGE_TEMPLATE`, keep both ahead of the shared library's own script
+tag, or the color/beer matching silently falls back to auto-assigned
+colors and "no beer match" for everything. Every tab's Python module
+imports whichever pieces of `shared.py` it actually needs, so
+`pyflakes shared.py
 orders_tab.py batches_tab.py inventory_tab.py customer_report_tab.py
 forecast_tab.py growth_efficiency_tab.py build_dashboard.py` is a
 quick way to catch an unused or missing import after editing one.
@@ -163,25 +170,42 @@ This is keyed by beer, not by product, on purpose — one beer is
 usually sold as several different Breww *products* (a keg, a can, a
 growler, each its own line item with its own full name, like
 "Spy-P-A - Keg"), and you almost always want all of them sharing the
-same color rather than configuring each package format separately. A
-product matches a configured entry whenever its name **contains that
-beer name anywhere** — "Spy-P-A - 1/2BBL Keg", "Spy-P-A 24 x 16oz
-can", and even a differently-ordered legacy name like
-"Case 24 x16oz Spy-P-A" (beer name at the *end*) all pick up the color
-configured under the single key `"Spy-P-A"`. A product whose name
-matches *no* configured beer still falls back to the automatic
-assignment, so you only need entries for the beers you actually want
-to control, and if a product's name happens to contain more than one
-configured beer name, the longer, more specific one wins.
+same color rather than configuring each package format separately.
 
-Worth knowing: matching *anywhere* in the name (rather than only at
-the start) is deliberately loose, to handle real product names that
-don't put the beer name first — which also means it's a little more
-prone to an unintended match than a stricter check would be, if a
-configured beer name happens to be a common word or substring that
-shows up somewhere in an unrelated product's name too. Worth a glance
-around the dashboard after adding a new entry to confirm nothing else
-picked up its color unexpectedly.
+A product resolves to a configured beer name two ways, tried in this
+order:
+
+1. **The reliable path**: Breww's own `component_drinks` field on the
+   product — a real, structured link to the beer(s) it's packaged
+   from, not a guess based on the product's name. This is the same
+   relationship the Forecast tab uses to group a beer's products
+   together (see that section above); a brand-new product added in
+   Breww resolves to its color correctly the moment you next pull
+   fresh data, with nothing to update here unless it's a genuinely new
+   beer.
+2. **A fallback**: if there's no linked drink data (or its name
+   doesn't match anything configured), the beer name is matched
+   anywhere in the product's own name instead — "Spy-P-A - 1/2BBL
+   Keg", "Spy-P-A 24 x 16oz can", and even a differently-ordered
+   legacy name like "Case 24 x16oz Spy-P-A" (beer name at the *end*)
+   all still resolve this way. This exists for products where the
+   structured link is missing, or where a historical order's product
+   name doesn't quite match today's catalog entry.
+
+A product matching neither path falls back to the automatic
+assignment, so you only need `PRODUCT_COLORS` entries for the beers
+you actually want to control. If a product's linked drink or its name
+happens to match more than one configured beer, the longer, more
+specific name wins.
+
+Worth knowing: the fallback path matches *anywhere* in the product's
+name, not just at the start — deliberately loose, to handle real
+product names that don't put the beer name first, which also means
+it's a little more prone to an unintended match than a stricter check
+would be, if a configured beer name happens to be a common word or
+substring that shows up somewhere in an unrelated product's name too.
+Worth a glance around the dashboard after adding a new entry to
+confirm nothing else picked up its color unexpectedly.
 
 This one setting affects every chart that colors individual products,
 not just the Orders tab's "All Products Sold" histogram — the same
@@ -194,7 +218,12 @@ Items charts (raw ingredients like hops and malt aren't beers, so
 `PRODUCT_COLORS` doesn't apply there at all), and Inventory's
 "On-Hand Quantity by Product" (top 10) chart, which stays a single
 uniform color on purpose — a ranking list where color doesn't add
-information the ranking doesn't already give you.
+information the ranking doesn't already give you. The Forecast tab's
+own chart is a related but separate case — there, every line
+deliberately gets a distinct color from a plain cycling palette
+instead of the shared brand color, specifically so multiple products
+of the *same* beer stay visually distinguishable from each other,
+which the shared brand color would defeat.
 
 **Production batches** (`/drink-batches/`, the `DrinkBatch` object)
 - Batch count, total volume brewed, average ABV — all-time
@@ -237,7 +266,13 @@ field in Breww's API — it isn't returned unless explicitly requested,
 which `config.py`'s `products` endpoint entry does via
 `include_fields`. If a product's per-site breakdown comes back empty
 but it has stock overall, that total is shown under an "Unspecified"
-location column instead of being dropped.
+location column instead of being dropped. The same `include_fields`
+also requests `component_drinks` — the structured link from a product
+to the beer(s) it's packaged from, used for product colors and the
+Forecast tab's beer-grouping (see those sections). It doesn't
+actually look like this one needs the explicit request based on
+Breww's docs, but `include_fields` is additive, so asking for it
+regardless is harmless either way.
 
 **Stock Items** (`/stock-received/`, the `StockReceived` object) —
 raw ingredients and packaging received into stock: hops, malt, caps,
@@ -361,9 +396,31 @@ blank, so it's clear at a glance that no named person was found.
 `/fulfillments/`, and the same order-line data as the other tabs — the
 first two are new endpoints, added specifically for this tab)
 
-Pick a product from the searchable dropdown and it projects that
-product's inventory level over the next 4 calendar months as a line
-chart, starting from current stock. Each month combines:
+Pick a **beer or a standalone product** from the searchable dropdown.
+Selecting a beer shows *every* one of its products (kegs, cans, etc.)
+projected together on one chart, so you can see at a glance where each
+package format is headed — useful for deciding how to split a planned
+batch (e.g. "kegs are running low but cans are fine, so allocate more
+of this batch to kegs"). Selecting an individual product shows just
+that one line, same as picking a beer with only one format.
+
+**How a product gets grouped under a beer**: Breww's own
+`component_drinks` field on each product — a real, structured link
+from a packaged product to the beer(s) it's made from — not a guess
+based on product name text. `config.PRODUCT_COLORS`' keys double as
+"which beers are groupable" (reusing the list you're already
+maintaining for colors, rather than a second config to keep in sync);
+a product whose linked beer isn't in that list shows up as its own
+standalone entry instead of disappearing. A genuine multi-beer
+mixed-pack (rare, but the field is technically a list) appears under
+*every* beer it contains. Since this relationship comes from Breww
+directly, a brand-new product added there groups correctly the moment
+you next pull fresh data — no config file to update for grouping to
+work, only if you want it to share an existing beer's *color* too.
+
+Each product's projection is computed **fully independently** — kegs
+and cans never get summed together, since they're not really
+comparable quantities. Each month combines:
 
 - **Planned production** — from `/planned-packagings/`, which tracks
   production at the *packaged product* level (a specific keg/can/cask
@@ -381,25 +438,36 @@ chart, starting from current stock. Each month combines:
   relevant to this chart.
 - **Projected new demand** — demand not yet reflected in an actual
   order. This takes last year's actual quantity sold in the *same*
-  calendar month, scales it by this year's year-over-year growth rate
-  (this year's total-to-date over the same period last year, for that
-  product), and then subtracts whatever's already known/booked for
-  that month from step above — so a real order already on the books
-  is never counted twice, once as itself and once as part of the
-  historical pattern.
+  calendar month (the seasonal baseline — this is what keeps a
+  seasonal beer's off-season from projecting nonzero demand), and
+  scales it by a growth factor computed from a **trailing 3-month
+  window**: this product's last 3 completed months of sales, divided
+  by the same 3 calendar months a year earlier. Deliberately not a
+  single month (too noisy — one big order or one bad week would swing
+  the whole projection) and not year-to-date (too slow to reflect a
+  real recent shift) — 3 months is a middle ground that weights recent
+  performance heavily without overreacting to it. If that year-ago
+  comparison window is too thin (under 20 units — the same reliability
+  threshold used elsewhere, e.g. a seasonal beer whose only months are
+  well outside the window), the growth factor is skipped entirely
+  (treated as 1×) rather than dividing by something unreliable — this
+  is specifically what stops a beer that wasn't sold last year from
+  projecting infinite demand this year. Whatever the resulting number
+  is, known/booked demand for that month is subtracted first, so a
+  real order already on the books is never counted twice.
 
-This is a heuristic planning aid, not a guaranteed prediction — a
-breakdown table under the chart shows exactly how each month's number
-was built (production, known orders, projected demand, running total),
-so you can sanity-check the pieces rather than trusting an opaque
-line. A warning appears above the chart if there's no matching sales
-history for that product in the comparison period last year (the
-projection then falls back to known orders and planned production
-only, with no seasonal component), or if that comparison period had
-very little volume (under 20 units), since the growth-rate estimate
-gets unreliable at that point. The chart doesn't clamp negative
-values to zero — a dip below the line at zero is a genuine projected
-stockout worth planning around.
+This is a heuristic planning aid, not a guaranteed prediction. A
+**Per-Product Summary** table shows each product's current stock,
+projected ending stock, and the growth factor actually used (or "N/A"
+if there's no year-ago data to compute one at all). A combined,
+**sortable** breakdown table underneath (click any column header to
+resort) shows exactly how each product's each month was built —
+production, known orders, projected demand, running total — with an
+inline note on any row where the growth factor was skipped, marked
+low-confidence, or missing a seasonal baseline for that specific
+month, so you can sanity-check the pieces rather than trust an opaque
+line. Nothing is clamped to zero — a row dipping below zero is a
+genuine projected stockout worth planning around.
 
 **Growth & Efficiency** (a new tab, built entirely from data already
 embedded by the Orders tab)
@@ -563,6 +631,10 @@ if you'd like that interactive too, matching Orders and Inventory.
    - **Products** (`/products/`) has no last-modified field either, so
      it's always pulled in full — fine, since a product catalog is
      small and doesn't change often.
+   - **Drinks** (`/drinks/`) same as products — no last-modified
+     field, always pulled in full, cheap given a beer/recipe catalog
+     is small too. Used only to resolve a beer's current name by ID
+     (see "Renamed products" below), nothing else.
    - **Fulfillments** (`/fulfillments/`) filter on `last_modified_at`,
      same as orders — this correctly catches a fulfillment flipping
      from not-dispatched to dispatched, not just newly-created ones.
@@ -595,6 +667,57 @@ if you'd like that interactive too, matching Orders and Inventory.
    copy those fields over. That join happens once in Python; after
    that, the beer chart filters and buckets its (now self-contained)
    records in the browser exactly like the rest of the Orders section.
+
+### Renamed products
+
+Renaming a product in Breww doesn't retroactively change what's on
+old records. Order lines, and the same order-line data nested inside
+each fulfillment, only ever carry a snapshot of the product's name
+*as it was at the time that record was created* (`product_name`). Left
+alone, that would silently fragment a renamed product's history across
+two different name strings — every chart, filter, color, beer
+grouping, and the Forecast tab's demand math would treat "old name"
+and "new name" as two unrelated products.
+
+`build_product_id_name_map` (in `shared.py`) is the fix: every one of
+those records also carries the product's stable Breww ID
+(`product`), which — unlike the name — doesn't change on a rename.
+The map resolves ID → current catalog name from `/products/`, and
+`prepare_order_line_records` (`orders_tab.py`) and
+`prepare_fulfillment_records` (`forecast_tab.py`) both normalize every
+record to that current name before anything else in the dashboard
+ever sees it. A product ID that no longer resolves (discontinued,
+deleted from the catalog entirely) just keeps whatever name was on
+the record at the time — there's nothing current to resolve it to.
+`prepare_planned_packaging_records` gets the same treatment, though
+there it's a defensive measure rather than a confirmed fix — that
+endpoint references the product as a nested object rather than a bare
+name string, which per Breww's schema should already reflect the
+current name on its own.
+
+Because this resolution happens once, at the source, every chart
+built from this data benefits automatically — nothing downstream
+needed its own fix, including product colors and the Forecast tab's
+beer-grouping, both of which depend on this same normalized data.
+
+The same risk existed one level up: `component_drinks` (the field
+product colors and Forecast beer-grouping use to find a product's
+underlying beer) carries a `drink_name` string in the same shape as
+the *problem* order-lines had, not the fix — a bare string next to a
+separate ID field, rather than a nested live reference. Confirmed
+this actually happens in practice (an actual renamed beer, not just
+theoretical), so it's fixed the same way: a dedicated `/drinks/`
+endpoint gives a beer's current name by ID, `build_drink_id_name_map`
+resolves it, and `build_product_drink_map` uses that resolved name
+instead of trusting `component_drinks`' own `drink_name` directly. One
+real wrinkle here worth knowing about if this code ever needs
+touching again — `component_drinks[].drink_id` is documented as a
+*string*, while `/drinks/`'s own `id` field is an *integer*; the map
+is deliberately built and queried using the string form on both sides
+to avoid a silent type-mismatch miss (an int key and its string
+equivalent don't collide once JSON-serialized as object keys, even
+though a checked `Sale.product`/products-catalog `id` pair happened to
+both be plain integers and never hit this).
 
 If you ever want to force a clean full re-pull of everything (e.g. you
 suspect the cache drifted), just delete the relevant file in `data/`

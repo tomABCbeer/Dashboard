@@ -8,6 +8,7 @@ import config
 from shared import (
     json_safe, filter_dropdown_html, has_cols, STACK_STATUSES, STACK_COLORS,
     PRIOR_YEAR_COLORS, MONTH_NAMES, BEER_TOP_N, BEER_COLORS, HISTOGRAM_COLORS,
+    build_product_id_name_map, _safe_int,
 )
 
 def prepare_orders_records(df, customer_types_df):
@@ -92,13 +93,22 @@ def _order_lookup(orders_df, customer_types_df):
     return lookup
 
 
-def prepare_order_line_records(order_lines_df, orders_df, customer_types_df):
+def prepare_order_line_records(order_lines_df, orders_df, customer_types_df, product_id_name_map=None):
     """Build order-line-level records (one per product/beer sold on an
     order), enriched with the parent order's issue_date, status,
     customer type, customer id/name, plus quantity - so the browser can
     filter and bucket these the same way as the order-level records,
     and so the per-customer report can group by customer and toggle
-    between $ and units."""
+    between $ and units.
+
+    product_name here is normalized to each product's CURRENT catalog
+    name wherever the product's stable ID resolves via
+    product_id_name_map (see build_product_id_name_map) - a product
+    renamed in Breww still has all its historical sales grouped under
+    one name, rather than fragmenting across old and new names. A
+    product whose ID doesn't resolve (deleted from the catalog, or no
+    products_df available at all) falls back to whatever name was
+    actually on the order line at the time."""
     if order_lines_df is None:
         return []
 
@@ -107,17 +117,29 @@ def prepare_order_line_records(order_lines_df, orders_df, customer_types_df):
         return []
 
     lookup = _order_lookup(orders_df, customer_types_df)
+    product_id_name_map = product_id_name_map or {}
 
     d = order_lines_df.copy()
     d["value"] = pd.to_numeric(d.get("value"), errors="coerce").fillna(0)
     d["quantity"] = pd.to_numeric(d.get("quantity"), errors="coerce").fillna(0)
     d["product_name"] = d.get("product_name")
+    has_product_id_col = "product" in d.columns
 
     records = []
-    for row in d[[order_id_col, "product_name", "value", "quantity"]].to_dict(orient="records"):
+    cols = [order_id_col, "product_name", "value", "quantity"]
+    if has_product_id_col:
+        cols.append("product")
+    for row in d[cols].to_dict(orient="records"):
         order_info = lookup.get(row[order_id_col])
         if order_info is None:
             continue
+
+        resolved_name = row["product_name"]
+        if has_product_id_col:
+            product_id = _safe_int(row.get("product"))
+            if product_id is not None and product_id in product_id_name_map:
+                resolved_name = product_id_name_map[product_id]
+
         records.append({
             "order_id": json_safe(row[order_id_col]),
             "issue_date": order_info["issue_date"],
@@ -125,14 +147,14 @@ def prepare_order_line_records(order_lines_df, orders_df, customer_types_df):
             "customer_type_name": order_info["customer_type_name"],
             "customer_id": order_info["customer_id"],
             "customer_name": order_info["customer_name"],
-            "product_name": json_safe(row["product_name"]),
+            "product_name": json_safe(resolved_name),
             "value": json_safe(row["value"]),
             "quantity": json_safe(row["quantity"]),
         })
     return records
 
 
-def build_orders_section(df, customer_types_df, order_lines_df):
+def build_orders_section(df, customer_types_df, order_lines_df, products_df=None):
     if df is None:
         return (
             "<h2>Orders</h2><p class='missing'>No cached data yet - run fetch_data.py first.</p>"
@@ -141,7 +163,8 @@ def build_orders_section(df, customer_types_df, order_lines_df):
 
     records = prepare_orders_records(df, customer_types_df)
     records_json = json.dumps(records, allow_nan=False)
-    line_records = prepare_order_line_records(order_lines_df, df, customer_types_df)
+    product_id_name_map = build_product_id_name_map(products_df)
+    line_records = prepare_order_line_records(order_lines_df, df, customer_types_df, product_id_name_map)
     line_records_json = json.dumps(line_records, allow_nan=False)
     default_types_json = json.dumps(config.DEFAULT_CUSTOMER_TYPES)
     stack_statuses_json = json.dumps(STACK_STATUSES)

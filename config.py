@@ -90,15 +90,33 @@ ENDPOINTS = {
         "path": "/products/",
         # Your finished/packaged products (kegs, cans, casks - not the
         # raw stock items in stock_received), used for the Inventory
-        # tab's "Products" section. quantity_in_stock_in_format_by_site
-        # is a "conditionally included field" per Breww's docs - it's
-        # not returned unless explicitly asked for via include_fields,
+        # tab's "Products" section, product colors, and the Forecast
+        # tab's beer-grouping. quantity_in_stock_in_format_by_site is a
+        # "conditionally included field" per Breww's docs - not
+        # returned unless explicitly asked for via include_fields,
         # which is what gives us the per-location breakdown.
+        # component_drinks (which beer(s) a product is packaged from)
+        # doesn't appear to need this based on the spec, but it's
+        # listed here anyway just in case - include_fields is
+        # additive, so this is harmless either way.
         "incremental_field": None,  # product catalogs are small and slow-changing
         "buffer_days": 0,           # - cheap to fully refresh every run
         "extra_params": {
-            "include_fields": "quantity_in_stock_in_format,quantity_in_stock_in_format_by_site",
+            "include_fields": "quantity_in_stock_in_format,quantity_in_stock_in_format_by_site,component_drinks",
         },
+    },
+    "drinks": {
+        "enabled": True,
+        "path": "/drinks/",
+        # The actual beer/recipe records (distinct from /products/,
+        # which is the packaged/sellable format of a drink). Used only
+        # to resolve a beer's CURRENT name by id, the same way
+        # /products/ resolves a product's current name - protects
+        # product colors and Forecast beer-grouping from going stale
+        # if a beer itself gets renamed (not just a product/package
+        # listing - see "Renamed products" below).
+        "incremental_field": None,  # beer/recipe catalogs are small and slow-changing
+        "buffer_days": 0,           # - cheap to fully refresh every run
     },
     "fulfillments": {
         "enabled": True,

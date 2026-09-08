@@ -149,6 +149,10 @@ function escapeHtml(s) {
 // any tab's own content exists on the page, so it can't rely on the
 // tab-to-tab pattern elsewhere (a later tab reading an earlier tab's
 // embedded data) the way Customer Report/Forecast do for order data.
+// productDrinkMap (product name -> its actual linked beer name(s), via
+// Breww's own component_drinks relationship) is embedded the same way,
+// for the same reason - and is also what the Forecast tab uses to
+// group a beer's products together, not just for color.
 // ---------------------------------------------------------------------
 var productColorOverrides = (function() {
   var el = document.getElementById('product-color-overrides');
@@ -160,15 +164,59 @@ var productColorOverrides = (function() {
   }
 })();
 
+var productDrinkMap = (function() {
+  var el = document.getElementById('product-drink-map');
+  if (!el) return {};
+  try {
+    return JSON.parse(el.textContent) || {};
+  } catch (e) {
+    return {};
+  }
+})();
+
+// Fuzzy-matches a single beer/drink name against config.PRODUCT_COLORS'
+// keys, tolerating minor spelling differences either direction (e.g.
+// "Spy-P-A" configured vs. Breww's internal "Spy-P-A IPA") rather than
+// requiring an exact match - the longer, more specific match wins if
+// more than one configured name could apply.
+function matchConfiguredBeerName(name) {
+  var bestMatch = null;
+  Object.keys(productColorOverrides).forEach(function(beerName) {
+    if (name.indexOf(beerName) !== -1 || beerName.indexOf(name) !== -1) {
+      if (!bestMatch || beerName.length > bestMatch.length) {
+        bestMatch = beerName;
+      }
+    }
+  });
+  return bestMatch;
+}
+
 // config.PRODUCT_COLORS is keyed by BEER name (e.g. "Spy-P-A"), but a
 // single beer is usually sold as several different Breww PRODUCTS (a
-// keg, a can, a growler, a differently-ordered legacy name like
-// "Case 24 x16oz Spy-P-A") - so a product matches a configured entry
-// whenever the beer name appears ANYWHERE in the product's full name,
-// not only as an exact match or only at the start. If a product name
-// contains more than one configured beer name, the longer, more
-// specific one wins.
+// keg, a can, a growler). Two ways a product resolves to a configured
+// beer, tried in order:
+//   1. The reliable path: this product's actual linked beer(s), via
+//      Breww's own component_drinks relationship (productDrinkMap) -
+//      not a guess, a real link Breww maintains.
+//   2. A fallback: the beer name appears ANYWHERE in the product's own
+//      name (e.g. a differently-ordered legacy name like "Case 24
+//      x16oz Spy-P-A"), for products with no linked drink data, or
+//      whose name on a historical order doesn't match today's catalog.
+// If a product name/drink matches more than one configured beer name,
+// the longer, more specific one wins.
 function findConfiguredProductColor(productName) {
+  var drinkNames = productDrinkMap[productName];
+  if (drinkNames && drinkNames.length) {
+    var bestFromDrinks = null;
+    drinkNames.forEach(function(drinkName) {
+      var match = matchConfiguredBeerName(drinkName);
+      if (match && (!bestFromDrinks || match.length > bestFromDrinks.length)) {
+        bestFromDrinks = match;
+      }
+    });
+    if (bestFromDrinks) return productColorOverrides[bestFromDrinks];
+  }
+
   var bestMatch = null;
   Object.keys(productColorOverrides).forEach(function(beerName) {
     if (productName.indexOf(beerName) !== -1) {
@@ -202,6 +250,37 @@ function buildProductColorMap(allProductNames, fallbackPalette) {
 // search, select all/none, and named saved presets (its own separate
 // localStorage key, so filters don't collide with each other).
 // ---------------------------------------------------------------------
+// Generic sortable-table helpers, shared by every table on the
+// dashboard with clickable column headers (Dormant Customers, Invoice
+// Aging, the Forecast tab's breakdown table). "type" is 'number' or
+// 'string' - numbers sort as numbers, everything else sorts as
+// lowercased text.
+function sortGenericRows(rows, column, ascending, type) {
+  return rows.slice().sort(function(a, b) {
+    if (type === 'number') {
+      var an = a[column] || 0, bn = b[column] || 0;
+      return ascending ? an - bn : bn - an;
+    }
+    var as = (a[column] || '').toString().toLowerCase();
+    var bs = (b[column] || '').toString().toLowerCase();
+    if (as < bs) return ascending ? -1 : 1;
+    if (as > bs) return ascending ? 1 : -1;
+    return 0;
+  });
+}
+
+function buildSortableHeaderRow(columns, sortColumn, sortAscending) {
+  var cells = columns.map(function(col) {
+    var indicator = '';
+    if (sortColumn === col.key) {
+      indicator = sortAscending ? ' \u25b2' : ' \u25bc';
+    }
+    return '<th><button type="button" class="sort-header-btn" data-sort-key="' + col.key + '">' +
+      escapeHtml(col.label) + indicator + '</button></th>';
+  }).join('');
+  return '<thead><tr>' + cells + '</tr></thead>';
+}
+
 function createSearchableFilter(opts) {
   var prefix = opts.prefix;
   var allValues = opts.allValues;
@@ -512,5 +591,128 @@ def _parse_json_list(raw):
     else:
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def build_drink_id_name_map(drinks_df):
+    """Maps each beer/drink's stable Breww ID to its CURRENT name,
+    from /drinks/. Parallel to build_product_id_name_map, but for
+    beers rather than products - component_drinks' drink_name (see
+    build_product_drink_map below) has the same shape as the
+    product_name snapshot that turned out to go stale on a product
+    rename (a bare name string sitting next to a separate id field,
+    not a nested live reference), so it's treated with the same
+    suspicion here rather than assumed to always be current.
+
+    Keyed by the STRING form of the id, not an int - component_drinks'
+    drink_id is documented as a string (unlike Sale.product, which is
+    an integer), while /drinks/ itself returns integer ids. Building
+    this map with string keys, and comparing against drink_id as-is
+    (already a string), avoids a type mismatch between the two."""
+    if drinks_df is None:
+        return {}
+    d = drinks_df.copy()
+    result = {}
+    for _, row in d.iterrows():
+        did = row.get("id")
+        name = row.get("name")
+        if did is None or not name:
+            continue
+        try:
+            if pd.isna(did):
+                continue
+        except (TypeError, ValueError):
+            pass
+        result[str(did)] = json_safe(name)
+    return result
+
+
+def build_product_drink_map(products_df, drink_id_name_map=None):
+    """Maps each product's exact name to the list of beer/drink names
+    it's actually packaged from (Breww's own component_drinks
+    relationship on the Product object), rather than guessing from
+    product name text. Used globally - by product-color matching, and
+    by the Forecast tab's beer-grouping - so it's embedded once, in
+    PAGE_TEMPLATE, ahead of the shared JS library (same reason
+    product-color-overrides is embedded there rather than by whichever
+    tab happens to need it first).
+
+    Each linked drink's name is resolved via drink_id_name_map
+    (build_drink_id_name_map, from /drinks/) where possible, rather
+    than trusting component_drinks' own drink_name directly - see that
+    function's docstring for why. A drink id that doesn't resolve
+    (deleted, or no drinks_df available) falls back to whatever name
+    was embedded on the product record.
+
+    Almost always exactly one drink per product, but the field is a
+    list (a "mixed-pack" containing several different beers would have
+    more than one), and it's nullable - a product with no linked
+    drink(s) at all maps to an empty list here."""
+    if products_df is None:
+        return {}
+    drink_id_name_map = drink_id_name_map or {}
+
+    d = products_df.copy()
+    result = {}
+    for _, row in d.iterrows():
+        name = row.get("name")
+        if not name:
+            continue
+        component_drinks = _parse_json_list(row.get("component_drinks"))
+        drink_names = []
+        for cd in component_drinks:
+            if not isinstance(cd, dict) or not cd.get("drink_name"):
+                continue
+            resolved = cd["drink_name"]
+            drink_id = cd.get("drink_id")
+            if drink_id is not None and str(drink_id) in drink_id_name_map:
+                resolved = drink_id_name_map[str(drink_id)]
+            drink_names.append(json_safe(resolved))
+        result[json_safe(name)] = drink_names
+    return result
+
+
+def _safe_int(v):
+    try:
+        if v is None or pd.isna(v):
+            return None
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_product_id_name_map(products_df):
+    """Maps each product's stable Breww ID to its CURRENT catalog
+    name. Several sources only ever carry a snapshot of a product's
+    name as it was AT THE TIME the record was created - order-line
+    records (Sale.product_name, one row per order), and the same Sale
+    schema nested inside each fulfillment's order_lines. Those
+    snapshots don't update retroactively if the product gets renamed
+    later in Breww, so historical records for a renamed product
+    silently split across two different name strings unless something
+    resolves them back together. The product ID itself, unlike the
+    name, stays stable across a rename - this map is what lets
+    prepare_order_line_records (orders_tab.py) and
+    prepare_fulfillment_records (forecast_tab.py) normalize every
+    record back to today's name, so every chart built from this data
+    sees one consistent, current product name rather than a fragmented
+    history. Also used - defensively, since planned-packagings'
+    product.name is a nested object reference rather than a bare
+    snapshot string, so it likely already reflects the current name -
+    to resolve prepare_planned_packaging_records the same way, at
+    effectively no cost either way."""
+    if products_df is None:
+        return {}
+    d = products_df.copy()
+    result = {}
+    for _, row in d.iterrows():
+        pid = row.get("id")
+        name = row.get("name")
+        if pid is None or not name:
+            continue
+        pid_int = _safe_int(pid)
+        if pid_int is None:
+            continue
+        result[pid_int] = json_safe(name)
+    return result
 
 
