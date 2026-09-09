@@ -187,7 +187,7 @@ def main():
         batches_html=build_batches_section(batches_df),
         stock_html=build_stock_section(stock_df, products_df),
         customer_report_html=build_customer_report_section(customers_df),
-        forecast_html=build_forecast_section(fulfillments_df, packagings_df, products_df),
+        forecast_html=build_forecast_section(fulfillments_df, packagings_df, products_df, batches_df),
         growth_efficiency_html=build_growth_efficiency_section(),
     )
 

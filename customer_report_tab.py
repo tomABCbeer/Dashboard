@@ -497,32 +497,6 @@ def build_customer_report_section(customers_df):
   var invoiceAgingSortColumn = invoiceAgingSortInit.column;
   var invoiceAgingSortAscending = invoiceAgingSortInit.ascending;
 
-  function sortGenericRows(rows, column, ascending, type) {{
-    return rows.slice().sort(function(a, b) {{
-      if (type === 'number') {{
-        var an = a[column] || 0, bn = b[column] || 0;
-        return ascending ? an - bn : bn - an;
-      }}
-      var as = (a[column] || '').toString().toLowerCase();
-      var bs = (b[column] || '').toString().toLowerCase();
-      if (as < bs) return ascending ? -1 : 1;
-      if (as > bs) return ascending ? 1 : -1;
-      return 0;
-    }});
-  }}
-
-  function buildSortableHeaderRow(columns, sortColumn, sortAscending) {{
-    var cells = columns.map(function(col) {{
-      var indicator = '';
-      if (sortColumn === col.key) {{
-        indicator = sortAscending ? ' \\u25b2' : ' \\u25bc';
-      }}
-      return '<th><button type="button" class="sort-header-btn" data-sort-key="' + col.key + '">' +
-        escapeHtml(col.label) + indicator + '</button></th>';
-    }}).join('');
-    return '<thead><tr>' + cells + '</tr></thead>';
-  }}
-
   function applyInvoiceAging() {{
     var windowInput = document.getElementById('invoice-aging-window');
     var windowDays = parseInt(windowInput.value, 10);

@@ -7,7 +7,7 @@ import json
 
 import pandas as pd
 
-from shared import json_safe, _safe_float, _parse_bool, _parse_json_list, HISTOGRAM_COLORS, build_product_id_name_map, _safe_int
+from shared import json_safe, _safe_float, _parse_bool, _parse_json_list, HISTOGRAM_COLORS, build_product_id_name_map, _safe_int, build_batch_completion_map
 
 
 def prepare_fulfillment_records(fulfillments_df, product_id_name_map=None):
@@ -53,7 +53,7 @@ def prepare_fulfillment_records(fulfillments_df, product_id_name_map=None):
     return records
 
 
-def prepare_planned_packaging_records(packagings_df, product_id_name_map=None):
+def prepare_planned_packaging_records(packagings_df, product_id_name_map=None, batch_completion_map=None):
     """Flatten planned packagings into product_name, planned date, and
     quantity still remaining to be packaged - the Forecast tab's
     "planned production" input. This is at the packaged-PRODUCT level
@@ -64,10 +64,26 @@ def prepare_planned_packaging_records(packagings_df, product_id_name_map=None):
     snapshot string field the way order-lines' product_name is - so it
     likely already reflects the product's current name even without
     this. Resolved via product ID anyway, purely defensively, since
-    it costs nothing and removes any doubt."""
+    it costs nothing and removes any doubt.
+
+    A line whose batch is marked Complete is EXCLUDED here entirely,
+    regardless of its own quantity_remaining - once a batch is done,
+    nothing more gets packaged from it, whether a specific line was
+    never started or mostly finished (Breww doesn't retroactively zero
+    out a line's remaining quantity just because the batch concluded
+    without fully using it, e.g. because the brewery packaged into a
+    different format instead of what was originally planned). Complete
+    is the ONLY exclusion signal - a batch id that doesn't resolve
+    (deleted batch, no batches_df available), and a batch that's
+    merely running behind schedule (Planned or In-progress, however
+    overdue its plan_date), are both left in. There's deliberately no
+    date-based staleness check here at all - a batch can legitimately
+    run well behind its original plan for all sorts of reasons, and
+    that alone doesn't mean the plan's been abandoned."""
     if packagings_df is None:
         return []
     product_id_name_map = product_id_name_map or {}
+    batch_completion_map = batch_completion_map or {}
 
     d = packagings_df.copy()
     d["quantity"] = pd.to_numeric(d.get("quantity"), errors="coerce").fillna(0)
@@ -75,6 +91,7 @@ def prepare_planned_packaging_records(packagings_df, product_id_name_map=None):
     d["quantity_remaining"] = (d["quantity"] - d["quantity_packaged_so_far"]).clip(lower=0)
     d["product_name"] = d.get("product.name")
     d["product_id"] = d.get("product.id")
+    d["batch_id"] = d.get("drink_batch.id")
 
     # Prefer expected_release_date (when it becomes available) over
     # date (when it's planned to be packaged), falling back to
@@ -86,13 +103,17 @@ def prepare_planned_packaging_records(packagings_df, product_id_name_map=None):
     else:
         d["plan_date"] = release if release is not None else planned
 
-    out_cols = ["product_name", "product_id", "plan_date", "quantity_remaining"]
+    out_cols = ["product_name", "product_id", "batch_id", "plan_date", "quantity_remaining"]
     for col in out_cols:
         if col not in d.columns:
             d[col] = None
     raw_records = d[out_cols].to_dict(orient="records")
     records = []
     for rec in raw_records:
+        batch_id = _safe_int(rec.get("batch_id"))
+        if batch_id is not None and batch_completion_map.get(batch_id):
+            continue  # batch is Complete - nothing more will be packaged from it
+
         resolved_name = rec.get("product_name")
         product_id = _safe_int(rec.get("product_id"))
         if product_id is not None and product_id in product_id_name_map:
@@ -105,10 +126,11 @@ def prepare_planned_packaging_records(packagings_df, product_id_name_map=None):
     return [r for r in records if r.get("quantity_remaining") and r["quantity_remaining"] > 0]
 
 
-def build_forecast_section(fulfillments_df, packagings_df, products_df=None):
+def build_forecast_section(fulfillments_df, packagings_df, products_df=None, batches_df=None):
     product_id_name_map = build_product_id_name_map(products_df)
+    batch_completion_map = build_batch_completion_map(batches_df)
     fulfillment_records = prepare_fulfillment_records(fulfillments_df, product_id_name_map)
-    packaging_records = prepare_planned_packaging_records(packagings_df, product_id_name_map)
+    packaging_records = prepare_planned_packaging_records(packagings_df, product_id_name_map, batch_completion_map)
     fulfillment_json = json.dumps(fulfillment_records, allow_nan=False)
     packaging_json = json.dumps(packaging_records, allow_nan=False)
     line_colors_json = json.dumps(HISTOGRAM_COLORS)
@@ -340,7 +362,16 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None):
       // Scheduled beyond the 4-month window: not relevant to this chart.
     }});
 
-    // Planned production landing in the window.
+    // Planned production landing in the window. A plan whose batch is
+    // marked Complete never even reaches here - that's filtered out
+    // in Python (prepare_planned_packaging_records), since a done
+    // batch definitively isn't producing more, regardless of date.
+    // Anything that survives that filter is treated as genuinely
+    // still active, the same way known unfulfilled orders are below -
+    // a plan dated before the forecast window (a batch running
+    // behind schedule, for whatever reason) is treated as due as soon
+    // as possible rather than dropped, since there's no reason to
+    // assume a delayed-but-not-complete batch has been abandoned.
     var plannedProduction = {{}};
     months.forEach(function(mk) {{ plannedProduction[mk] = 0; }});
     packagingData.forEach(function(r) {{
@@ -349,9 +380,10 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None):
       var qty = r.quantity_remaining || 0;
       if (mk && plannedProduction.hasOwnProperty(mk)) {{
         plannedProduction[mk] += qty;
-      }} else if (mk && mk < months[0]) {{
+      }} else if (!mk || mk < months[0]) {{
         plannedProduction[months[0]] += qty;
       }}
+      // Scheduled beyond the 4-month window: not relevant to this chart.
     }});
 
     // Growth rate, from actual historical order lines, using a

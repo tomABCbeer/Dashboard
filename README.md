@@ -429,6 +429,30 @@ comparable quantities. Each month combines:
   (`quantity - quantity_packaged_so_far`) counts, and a plan uses its
   `expected_release_date` if set, falling back to its `date` (the
   planned packaging date) otherwise.
+
+  A plan is excluded entirely if its linked batch (`drink_batch.id`)
+  is marked **Complete** in `/drink-batches/` — once a batch is done,
+  nothing more gets packaged from it, regardless of how much of that
+  specific line was actually finished. This matters because Breww
+  doesn't retroactively zero out a line's remaining quantity just
+  because the batch concluded without fully using it — e.g. a batch
+  planned for both kegs and cans that, in practice, only ever got
+  packaged into cans (or a different keg size than planned) still
+  shows a nonzero "remaining" on the keg line forever, even though the
+  batch is long finished. This check looks at the *whole* remaining
+  quantity, not just lines with zero progress — a line that's 80%
+  packaged on a since-completed batch is in the same boat as one at
+  0%: whatever's left on either isn't coming, since there's no more
+  batch to draw from.
+
+  Complete is the *only* exclusion signal — deliberately, there's no
+  date-based cutoff on top of it. A plan whose batch doesn't resolve
+  at all (deleted batch, no batch data cached), or one that's simply
+  running behind its original schedule (Planned or In-progress,
+  however overdue), is still counted as real, current production. A
+  batch can legitimately fall behind for all sorts of reasons, and
+  that alone is never treated as a reason to assume it's been
+  abandoned — only an explicit Complete status is.
 - **Known unfulfilled orders** — from `/fulfillments/`, filtered to
   ones where `dispatched` is false, using each one's `date_scheduled`.
   A fulfillment with no scheduled date, or one that's overdue (dated

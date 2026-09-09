@@ -716,3 +716,33 @@ def build_product_id_name_map(products_df):
     return result
 
 
+def build_batch_completion_map(batches_df):
+    """Maps each drink batch's stable Breww ID to whether it's marked
+    Complete (status 3 - see config.BATCH_STATUS_LABELS). Used by
+    prepare_planned_packaging_records to exclude a planned-packaging
+    line entirely once its batch is done - a batch that's Complete
+    isn't going to have any more packaging happen from it, regardless
+    of how much of a specific line's planned quantity was actually
+    packaged (a line at 0% and one at 90% are in the same boat: once
+    the batch is done, whatever's left on either just isn't coming). A
+    batch id that doesn't resolve here (deleted batch, no batches_df
+    available) leaves that question unanswered rather than assuming
+    either way - prepare_planned_packaging_records falls back to its
+    own date-based staleness check for those specifically."""
+    if batches_df is None:
+        return {}
+    d = batches_df.copy()
+    result = {}
+    for _, row in d.iterrows():
+        bid = _safe_int(row.get("id"))
+        if bid is None:
+            continue
+        status = row.get("status")
+        try:
+            is_complete = int(status) == 3
+        except (TypeError, ValueError):
+            continue
+        result[bid] = is_complete
+    return result
+
+
