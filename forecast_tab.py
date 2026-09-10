@@ -387,11 +387,11 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
     }});
 
     // Growth rate, from actual historical order lines, using a
-    // trailing 3-month window rather than year-to-date - weights
-    // recent sales much more heavily, while still comparing against
-    // the same 3 calendar months a year ago so a genuinely seasonal
-    // product doesn't get penalized just because "now" happens to be
-    // its off-season.
+    // trailing window (up to 3 months, see below) rather than
+    // year-to-date - weights recent sales much more heavily, while
+    // still comparing against the same months a year ago so a
+    // genuinely seasonal product doesn't get penalized just because
+    // "now" happens to be its off-season.
     function sumQuantityInRange(startDate, endDate) {{
       return lineData.filter(function(r) {{
         return r.product_name === productName &&
@@ -400,32 +400,89 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
       }}).reduce(function(s, r) {{ return s + (r.quantity || 0); }}, 0);
     }}
 
+    // A product's very first sale ever, across all history - used to
+    // stop a newly-launched product's pre-launch "zero sales" months
+    // from being counted as real down-scaling data. A launch 14
+    // months ago and a genuine 0-unit month 14 months ago look
+    // identical in the raw numbers otherwise, but mean opposite
+    // things for a growth estimate.
+    var allSales = lineData.filter(function(r) {{
+      return r.product_name === productName && r.order_status_label !== 'Cancelled' && r.issue_date;
+    }});
+    var firstSaleMonthKey = null;
+    allSales.forEach(function(r) {{
+      var mk = monthKey(r.issue_date);
+      if (!firstSaleMonthKey || mk < firstSaleMonthKey) firstSaleMonthKey = mk;
+    }});
+
     var curY = today.getUTCFullYear(), curM = today.getUTCMonth() + 1;
-    var winStart = shiftMonth(curY, curM, -3);
-    var winEnd = shiftMonth(curY, curM, -1);
-    var trailingStartKey = ymKey(winStart) + '-01';
-    var trailingEndKey = ymKey(winEnd) + '-31';
-    var trailingThisYear = sumQuantityInRange(trailingStartKey, trailingEndKey);
+    var lastCompletedMonth = shiftMonth(curY, curM, -1);
+    var lastCompletedMonthKey = ymKey(lastCompletedMonth);
 
-    var winStartLastYear = shiftMonth(winStart.y, winStart.m, -12);
-    var winEndLastYear = shiftMonth(winEnd.y, winEnd.m, -12);
-    var trailingStartLastYearKey = ymKey(winStartLastYear) + '-01';
-    var trailingEndLastYearKey = ymKey(winEndLastYear) + '-31';
-    var trailingLastYear = sumQuantityInRange(trailingStartLastYearKey, trailingEndLastYearKey);
+    var growthFactor = 1;
+    var hasGrowthHistory = false;
+    var lowConfidence = false;
+    var trailingThisYear = 0;
+    var trailingLastYear = 0;
+    var growthWindowMonths = null;
 
-    var hasGrowthHistory = trailingLastYear > 0;
-    var growthFactor = hasGrowthHistory ? (trailingThisYear / trailingLastYear) : 1;
-    var lowConfidence = hasGrowthHistory && trailingLastYear < 20;
+    // Less than one full completed month of history at all (including
+    // no sales ever) - no basis for a growth adjustment, use 1x.
+    if (firstSaleMonthKey && firstSaleMonthKey <= lastCompletedMonthKey) {{
+      // Try the widest window (3 months) first, shrinking to 2 then 1
+      // if the product hasn't been around long enough for the wider
+      // window's "this year" or "same months last year" side to be
+      // real, sold history rather than pre-launch zeros.
+      for (var tryN = 3; tryN >= 1; tryN--) {{
+        var tryStart = shiftMonth(curY, curM, -tryN);
+        var tryStartKey = ymKey(tryStart);
+        var tryStartLastYear = shiftMonth(tryStart.y, tryStart.m, -12);
+        var tryStartLastYearKey = ymKey(tryStartLastYear);
+        if (tryStartKey >= firstSaleMonthKey && tryStartLastYearKey >= firstSaleMonthKey) {{
+          growthWindowMonths = tryN;
+          break;
+        }}
+      }}
+
+      if (growthWindowMonths !== null) {{
+        var winStart = shiftMonth(curY, curM, -growthWindowMonths);
+        var winEnd = lastCompletedMonth;
+        var trailingStartKey = ymKey(winStart) + '-01';
+        var trailingEndKey = ymKey(winEnd) + '-31';
+        trailingThisYear = sumQuantityInRange(trailingStartKey, trailingEndKey);
+
+        var winStartLastYear = shiftMonth(winStart.y, winStart.m, -12);
+        var winEndLastYear = shiftMonth(winEnd.y, winEnd.m, -12);
+        var trailingStartLastYearKey = ymKey(winStartLastYear) + '-01';
+        var trailingEndLastYearKey = ymKey(winEndLastYear) + '-31';
+        trailingLastYear = sumQuantityInRange(trailingStartLastYearKey, trailingEndLastYearKey);
+
+        hasGrowthHistory = trailingLastYear > 0;
+        growthFactor = hasGrowthHistory ? (trailingThisYear / trailingLastYear) : 1;
+        lowConfidence = hasGrowthHistory && trailingLastYear < 20;
+      }}
+      // growthWindowMonths still null here means the product hasn't
+      // been around a full year yet even at a 1-month window - no
+      // valid same-period-last-year comparison exists, so it's left
+      // at the growthFactor=1 / hasGrowthHistory=false defaults set above.
+    }}
 
     // Projected NEW demand (not yet on the books): last year's actual
     // for that calendar month (the seasonal baseline), scaled by the
-    // trailing-3-month growth rate, minus whatever's already
-    // known/booked for that month - so a booked order is never
-    // counted twice. "One year before" is computed from EACH forecast
-    // month's own year, not from today's year - a forecast month that
-    // rolls into next calendar year (e.g. forecasting from October
-    // into next January) needs its baseline from THIS January, not
-    // from two years back.
+    // growth rate above. Deliberately NOT reduced by known unfulfilled
+    // orders for that month - those come from a different date field
+    // entirely (fulfillments' scheduled delivery date, vs. the order
+    // issue dates the baseline and growth rate are built from), so an
+    // advance order placed months before its scheduled delivery was
+    // never part of the historical baseline to begin with; subtracting
+    // it here would silently understate demand rather than avoid
+    // double-counting. Known orders and projected demand are added as
+    // independent outflows in the running total below instead.
+    // "One year before" is computed from EACH forecast month's own
+    // year, not from today's year - a forecast month that rolls into
+    // next calendar year (e.g. forecasting from October into next
+    // January) needs its baseline from THIS January, not from two
+    // years back.
     var projectedDemand = {{}};
     var hasSeasonalBaseline = {{}};
     months.forEach(function(mk) {{
@@ -434,9 +491,7 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
       var lastYearMonthKey = (thisMonthYear - 1) + '-' + parts[1];
       var lastYearMonthActual = sumQuantityInRange(lastYearMonthKey + '-01', lastYearMonthKey + '-31');
       hasSeasonalBaseline[mk] = lastYearMonthActual > 0;
-      var projectedTotal = lastYearMonthActual * growthFactor;
-      var alreadyKnown = knownUnfulfilled[mk] || 0;
-      projectedDemand[mk] = Math.max(0, projectedTotal - alreadyKnown);
+      projectedDemand[mk] = lastYearMonthActual * growthFactor;
     }});
 
     var points = [{{label: 'Now', key: null, inventory: startInventory}}];
@@ -453,7 +508,7 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
       knownUnfulfilled: knownUnfulfilled, plannedProduction: plannedProduction,
       projectedDemand: projectedDemand, growthFactor: growthFactor,
       hasGrowthHistory: hasGrowthHistory, lowConfidence: lowConfidence,
-      hasSeasonalBaseline: hasSeasonalBaseline,
+      hasSeasonalBaseline: hasSeasonalBaseline, growthWindowMonths: growthWindowMonths,
       trailingThisYear: trailingThisYear, trailingLastYear: trailingLastYear
     }};
   }}
@@ -490,6 +545,9 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
     var summaryRows = forecasts.map(function(f) {{
       var endInv = f.points[f.points.length - 1].inventory;
       var growthDisplay = f.hasGrowthHistory ? (f.growthFactor * 100).toFixed(0) + '%' : 'N/A';
+      if (f.hasGrowthHistory && f.growthWindowMonths && f.growthWindowMonths < 3) {{
+        growthDisplay += ' (' + f.growthWindowMonths + 'mo window - new product)';
+      }}
       if (f.hasGrowthHistory && f.lowConfidence) growthDisplay += ' (low confidence)';
       return '<tr>' +
         '<td>' + escapeHtml(f.productName) + '</td>' +
@@ -499,7 +557,7 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
         '</tr>';
     }}).join('');
     document.getElementById('forecast-summary-table').innerHTML =
-      '<thead><tr><th>Product</th><th>Current stock</th><th>Projected in 4 months</th><th>Trailing 3-month growth used</th></tr></thead>' +
+      '<thead><tr><th>Product</th><th>Current stock</th><th>Projected in 4 months</th><th>Trailing growth used (up to 3mo)</th></tr></thead>' +
       '<tbody>' + summaryRows + '</tbody>';
 
     // --- Chart: one line per product ---

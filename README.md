@@ -464,26 +464,55 @@ comparable quantities. Each month combines:
   order. This takes last year's actual quantity sold in the *same*
   calendar month (the seasonal baseline — this is what keeps a
   seasonal beer's off-season from projecting nonzero demand), and
-  scales it by a growth factor computed from a **trailing 3-month
-  window**: this product's last 3 completed months of sales, divided
-  by the same 3 calendar months a year earlier. Deliberately not a
-  single month (too noisy — one big order or one bad week would swing
-  the whole projection) and not year-to-date (too slow to reflect a
-  real recent shift) — 3 months is a middle ground that weights recent
-  performance heavily without overreacting to it. If that year-ago
-  comparison window is too thin (under 20 units — the same reliability
-  threshold used elsewhere, e.g. a seasonal beer whose only months are
-  well outside the window), the growth factor is skipped entirely
-  (treated as 1×) rather than dividing by something unreliable — this
-  is specifically what stops a beer that wasn't sold last year from
-  projecting infinite demand this year. Whatever the resulting number
-  is, known/booked demand for that month is subtracted first, so a
-  real order already on the books is never counted twice.
+  scales it by a growth factor computed from a **trailing window**:
+  this product's most recent completed months of sales, divided by
+  the same calendar months a year earlier. Deliberately not a single
+  month (too noisy — one big order or one bad week would swing the
+  whole projection) and not year-to-date (too slow to reflect a real
+  recent shift) — a short trailing window weights recent performance
+  heavily without overreacting to it.
+
+  The window is **up to 3 months**, but shrinks to 2 or 1 for a
+  product that hasn't been around long enough for the wider window to
+  reflect real sales rather than pre-launch zeros — a product launched
+  14 months ago only has 2 real comparable months (this window and the
+  same one a year back), not 3; using 3 would silently count a month
+  that predates the product's existence as a genuine "zero sales"
+  data point, which would understate real demand growth rather than
+  measure it accurately. If even a 1-month window doesn't have a
+  valid same-period-last-year comparison (the product hasn't existed
+  for a full year yet), or the product has under a month of history
+  at all, the growth factor is skipped entirely and treated as 1×
+  (no adjustment) — the summary table shows this as **N/A**, and
+  shows the shrunk window size directly (e.g. "200% (2mo window - new
+  product)") whenever it's used, so a surprising number is easy to
+  trace back to *why*.
+
+  Separately: if the *year-ago* comparison window has some sales but
+  fewer than 20 units (the same reliability threshold used elsewhere),
+  the growth factor is still used but flagged **low confidence** in
+  both tables — a small sample makes the ratio noisy, but not
+  unusable. And if the year-ago window has literally zero units, the
+  growth factor is skipped the same way as "not enough history" above
+  — this is what stops a beer that wasn't sold at all last year from
+  projecting infinite demand this year.
+
+  This number is **not** reduced by known/booked orders for that
+  month, even though it might seem like double-counting at a glance —
+  it isn't. The growth factor and seasonal baseline are built entirely
+  from order *issue* dates (when something was placed); known orders
+  come from fulfillments, keyed by *scheduled delivery* date instead.
+  An advance order placed in September for a December delivery was
+  never part of December's historical baseline to begin with — it's
+  in September's. Subtracting it from December's projected demand
+  would silently understate real demand rather than avoid double
+  counting it. Projected demand and known orders are added as two
+  independent outflows in the running total instead.
 
 This is a heuristic planning aid, not a guaranteed prediction. A
 **Per-Product Summary** table shows each product's current stock,
 projected ending stock, and the growth factor actually used (or "N/A"
-if there's no year-ago data to compute one at all). A combined,
+if there's no valid year-ago data to compute one at all). A combined,
 **sortable** breakdown table underneath (click any column header to
 resort) shows exactly how each product's each month was built —
 production, known orders, projected demand, running total — with an
