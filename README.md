@@ -75,13 +75,19 @@ growth_efficiency_tab.py   — Growth & Efficiency
 (`createSearchableFilter` — search, select all/none, saved presets),
 the sortable-table component (`sortGenericRows`,
 `buildSortableHeaderRow` — used by Dormant Customers, Invoice Aging,
-and the Forecast tab's breakdown table), and the product-color/beer
-matching logic (`findConfiguredProductColor`, `buildProductColorMap`
-— see "Product colors" below) as single JS strings, injected once at
-the top of the page rather than duplicated per tab. On the Python
-side, `build_product_drink_map()` turns each product's
+the Forecast tab's breakdown table, and Inventory's Product Stock by
+Location table), the product-color/beer matching logic
+(`findConfiguredProductColor`, `buildProductColorMap` — see "Product
+colors" below), and the beer-or-product picker grouping logic
+(`buildBeerOrProductPickerEntries` — shared by the Forecast tab and
+Inventory's Product Stock by Location table, though each tab wires up
+its own dropdown DOM/interaction code independently, matching how
+other picker UIs are already split between shared CSS/logic and
+per-tab wiring throughout this codebase) as single JS strings,
+injected once at the top of the page rather than duplicated per tab.
+On the Python side, `build_product_drink_map()` turns each product's
 `component_drinks` into a simple name → beer-name(s) lookup, used by
-both the color matching and the Forecast tab's beer-grouping.
+both the color matching and the beer-grouping picker logic.
 `PAGE_TEMPLATE` embeds `config.PRODUCT_COLORS` and that drink map as
 two small JSON script tags *immediately before* the shared library's
 own `<script>` tag specifically so both are already parsed into the
@@ -257,8 +263,16 @@ zero current stock.
 - Product stock quantity by location (pie) — scoped by its own filter
 - **Product stock by location table** — one row per product, one
   column per location holding that location's current quantity, plus
-  a Total column summing across locations. Not affected by any
-  filter, always shows everything cached.
+  a Total column summing across locations. **Sortable** — click any
+  column header, including a location column or Total, to sort by it;
+  click again to reverse. Has its own filter, independent of the three
+  charts above: a searchable **beer-or-product picker**, the same
+  pattern the Forecast tab uses (see that section) — pick a beer to
+  see every one of its products together, or narrow to one specific
+  product. Unlike Forecast's picker, this one defaults to a synthetic
+  **"All Products"** entry (shown first, selected by default), since
+  this table's natural starting point is showing everything rather
+  than requiring an explicit choice.
 
 Note on products: the per-location stock breakdown
 (`quantity_in_stock_in_format_by_site`) is a "conditionally included"

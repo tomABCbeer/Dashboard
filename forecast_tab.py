@@ -200,45 +200,12 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
   packagingData.forEach(function(r) {{ if (r.product_name) productSet[r.product_name] = true; }});
   var allProducts = Object.keys(productSet).sort();
 
-  // --- Group products by beer, using Breww's own component_drinks
-  // link (productDrinkMap, global - see shared.py) rather than
-  // guessing from product name text. config.PRODUCT_COLORS' keys are
-  // reused as "which beers are groupable" - a product whose linked
-  // drink(s) don't match any configured beer name shows up standalone
-  // instead of disappearing. A mixed-pack (more than one linked
-  // drink) appears under every beer it contains.
-  function matchedBeerNamesForProduct(productName) {{
-    var drinkNames = productDrinkMap[productName] || [];
-    var matched = [];
-    drinkNames.forEach(function(dn) {{
-      var m = matchConfiguredBeerName(dn);
-      if (m && matched.indexOf(m) === -1) matched.push(m);
-    }});
-    return matched;
-  }}
-
-  var beerGroups = {{}};
-  var standaloneProducts = [];
-  allProducts.forEach(function(p) {{
-    var matched = matchedBeerNamesForProduct(p);
-    if (matched.length === 0) {{
-      standaloneProducts.push(p);
-    }} else {{
-      matched.forEach(function(beerName) {{
-        if (!beerGroups[beerName]) beerGroups[beerName] = [];
-        beerGroups[beerName].push(p);
-      }});
-    }}
-  }});
-
-  var pickerEntries = [];
-  Object.keys(beerGroups).sort().forEach(function(beerName) {{
-    pickerEntries.push({{type: 'beer', label: beerName + ' (all formats)', products: beerGroups[beerName].slice().sort()}});
-  }});
-  standaloneProducts.sort().forEach(function(p) {{
-    pickerEntries.push({{type: 'product', label: p, products: [p]}});
-  }});
-  pickerEntries.sort(function(a, b) {{ return a.label.localeCompare(b.label); }});
+  // --- Group products by beer, using the shared grouping logic
+  // (buildBeerOrProductPickerEntries, in shared.py) - Breww's own
+  // component_drinks link, not a guess from product name text. This
+  // tab always requires an explicit pick, so no synthetic "All
+  // Products" entry is added.
+  var pickerEntries = buildBeerOrProductPickerEntries(allProducts, false);
 
   var selectedEntry = null;
 

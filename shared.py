@@ -191,6 +191,54 @@ function matchConfiguredBeerName(name) {
   return bestMatch;
 }
 
+// Groups a list of product names into "pick a beer (all its products
+// together) or a standalone product" entries, using productDrinkMap
+// (Breww's own component_drinks link) rather than guessing from
+// product name text - the same grouping the Forecast tab uses, shared
+// here since more than one tab needs the identical logic. A product
+// whose linked beer(s) don't match a configured name (config.PRODUCT_COLORS'
+// keys double as "which beers are groupable") shows up standalone
+// instead of disappearing; a genuine mixed-pack (more than one linked
+// beer) appears under every beer it contains. Pass includeAllOption
+// to prepend a synthetic "All Products" entry covering every product
+// given - useful for a table/chart that defaults to showing
+// everything, where Forecast's own picker (which always requires an
+// explicit choice) doesn't need one.
+function buildBeerOrProductPickerEntries(allProductNames, includeAllOption) {
+  var beerGroups = {};
+  var standaloneProducts = [];
+  allProductNames.forEach(function(p) {
+    var drinkNames = productDrinkMap[p] || [];
+    var matched = [];
+    drinkNames.forEach(function(dn) {
+      var m = matchConfiguredBeerName(dn);
+      if (m && matched.indexOf(m) === -1) matched.push(m);
+    });
+    if (matched.length === 0) {
+      standaloneProducts.push(p);
+    } else {
+      matched.forEach(function(beerName) {
+        if (!beerGroups[beerName]) beerGroups[beerName] = [];
+        beerGroups[beerName].push(p);
+      });
+    }
+  });
+
+  var entries = [];
+  Object.keys(beerGroups).sort().forEach(function(beerName) {
+    entries.push({type: 'beer', label: beerName + ' (all formats)', products: beerGroups[beerName].slice().sort()});
+  });
+  standaloneProducts.sort().forEach(function(p) {
+    entries.push({type: 'product', label: p, products: [p]});
+  });
+  entries.sort(function(a, b) { return a.label.localeCompare(b.label); });
+
+  if (includeAllOption) {
+    entries.unshift({type: 'all', label: 'All Products', products: allProductNames.slice()});
+  }
+  return entries;
+}
+
 // config.PRODUCT_COLORS is keyed by BEER name (e.g. "Spy-P-A"), but a
 // single beer is usually sold as several different Breww PRODUCTS (a
 // keg, a can, a growler). Two ways a product resolves to a configured

@@ -317,26 +317,6 @@ def build_stock_items_subsection(df):
 """
 
 
-def build_product_stock_pivot_html(records):
-    """Turn the flat per-product-per-location records into a pivot
-    table: one row per product, one column per location holding that
-    location's quantity, plus a Total column - much easier to scan
-    across locations than a long flat list."""
-    df = pd.DataFrame(records)
-    df["location_name"] = df["location_name"].fillna("Unspecified")
-    pivot = df.pivot_table(index="product_name", columns="location_name",
-                            values="quantity", aggfunc="sum", fill_value=0)
-    pivot["Total"] = pivot.sum(axis=1)
-    pivot = pivot.sort_values("Total", ascending=False).reset_index()
-    pivot = pivot.rename(columns={"product_name": "Product"})
-    pivot.columns.name = None  # pivot_table leaves this set to "location_name",
-    # which otherwise renders as a stray extra header row/empty column in the HTML table
-
-    numeric_cols = [c for c in pivot.columns if c != "Product"]
-    pivot[numeric_cols] = pivot[numeric_cols].round(1)
-    return table_html(pivot, max_rows=50)
-
-
 def build_products_subsection(products_df):
     """Finished, packaged, sellable products (kegs, cans, casks) from
     /products/ - distinct from the raw stock items above. Mirrors that
@@ -363,8 +343,6 @@ def build_products_subsection(products_df):
     total_value = sum(r.get("value") or 0 for r in records)
     kpi_html = kpi_row([(f"{lot_count:,}", "Product/location lines"),
                          (f"${total_value:,.0f}", "Total product stock value")])
-
-    table = build_product_stock_pivot_html(records)
 
     return f"""
 <h3>Products</h3>
@@ -403,8 +381,27 @@ def build_products_subsection(products_df):
 <div id="chart-inventory-product-by-location-pie" class="chart-div"></div>
 
 <h4>Product Stock by Location</h4>
-<p class="section-note">Every product's current quantity, broken out by location, in one table.</p>
-{table}
+<p class="section-note">Every product's current quantity, broken out by location - pick a beer to see all its products together, or narrow to one specific product. Click any column header to sort.</p>
+<div class="chart-scoped-filter" id="inventory-product-table-filters">
+  <div class="filter-group">
+    <label>Beer or product</label>
+    <div class="customer-dropdown" id="inventory-product-table-dropdown">
+      <button type="button" class="customer-dropdown-toggle" id="inventory-product-table-toggle">
+        <span id="inventory-product-table-summary">All Products</span>
+        <span class="filter-dropdown-caret">&#9662;</span>
+      </button>
+      <div class="customer-dropdown-panel" id="inventory-product-table-panel" hidden>
+        <input type="text" id="inventory-product-table-search" class="customer-search-input"
+               placeholder="Search beers and products&hellip;" autocomplete="off">
+        <div id="inventory-product-table-list"></div>
+        <p id="inventory-product-table-empty" class="product-search-empty" hidden>No beers or products match your search.</p>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="table-wrap">
+  <table class="data-table" id="inventory-product-stock-table"></table>
+</div>
 
 <script id="product-stock-data" type="application/json">{records_json}</script>
 <script>
@@ -540,6 +537,136 @@ def build_products_subsection(products_df):
   applyProductLocationChart();
   applyProductTopChart();
   applyProductLocationPieChart();
+
+  // ===================== Product Stock by Location table =====================
+  // Uses the shared beer-or-product grouping (buildBeerOrProductPickerEntries,
+  // in shared.py) - the same picker pattern as the Forecast tab, but
+  // with a synthetic "All Products" entry prepended and selected by
+  // default, since this table's natural starting point is showing
+  // everything rather than requiring an explicit pick first.
+  var stockTablePickerEntries = buildBeerOrProductPickerEntries(allProducts, true);
+  var stockTableSelectedEntry = stockTablePickerEntries[0];
+
+  var stockTableDropdown = document.getElementById('inventory-product-table-dropdown');
+  var stockTablePanel = document.getElementById('inventory-product-table-panel');
+  var stockTableToggle = document.getElementById('inventory-product-table-toggle');
+  var stockTableSearchInput = document.getElementById('inventory-product-table-search');
+  var stockTableListDiv = document.getElementById('inventory-product-table-list');
+  var stockTableSummary = document.getElementById('inventory-product-table-summary');
+  var stockTableEmptyMsg = document.getElementById('inventory-product-table-empty');
+
+  function buildStockTablePickerList() {{
+    stockTableListDiv.innerHTML = stockTablePickerEntries.map(function(entry, i) {{
+      var safe = escapeHtml(entry.label);
+      return '<label class="customer-row" data-search="' + safe.toLowerCase() + '" data-index="' + i + '">' + safe + '</label>';
+    }}).join('') || '<span style="font-size:12px;color:#a39a8c;">No beers or products found</span>';
+  }}
+
+  function filterStockTableRows(query) {{
+    var q = query.trim().toLowerCase();
+    var rows = stockTableListDiv.querySelectorAll('.customer-row');
+    var anyVisible = false;
+    rows.forEach(function(row) {{
+      var matches = !q || row.getAttribute('data-search').indexOf(q) !== -1;
+      row.style.display = matches ? '' : 'none';
+      if (matches) anyVisible = true;
+    }});
+    if (stockTableEmptyMsg) stockTableEmptyMsg.hidden = anyVisible || rows.length === 0;
+  }}
+
+  function openStockTableDropdown() {{
+    stockTablePanel.hidden = false;
+    stockTableSearchInput.value = '';
+    filterStockTableRows('');
+    stockTableSearchInput.focus();
+  }}
+  function closeStockTableDropdown() {{ stockTablePanel.hidden = true; }}
+
+  stockTableToggle.addEventListener('click', function() {{
+    if (stockTablePanel.hidden) {{ openStockTableDropdown(); }} else {{ closeStockTableDropdown(); }}
+  }});
+  stockTableSearchInput.addEventListener('input', function() {{ filterStockTableRows(stockTableSearchInput.value); }});
+  document.addEventListener('click', function(e) {{
+    if (!stockTableDropdown.contains(e.target)) closeStockTableDropdown();
+  }});
+  stockTableDropdown.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{ closeStockTableDropdown(); stockTableToggle.focus(); }}
+  }});
+
+  stockTableListDiv.addEventListener('click', function(e) {{
+    var row = e.target.closest('.customer-row');
+    if (!row) return;
+    var idx = parseInt(row.getAttribute('data-index'), 10);
+    stockTableSelectedEntry = stockTablePickerEntries[idx];
+    stockTableSummary.textContent = stockTableSelectedEntry.label;
+    closeStockTableDropdown();
+    applyStockTable();
+  }});
+
+  function fmtQty(n) {{ return (Math.round((n || 0) * 10) / 10).toLocaleString(); }}
+
+  var stockTableSortColumn = 'Product';
+  var stockTableSortAscending = true;
+
+  function applyStockTable() {{
+    var filteredRows = filterProducts(stockTableSelectedEntry.products);
+
+    var byProduct = {{}};
+    var locationsSet = {{}};
+    filteredRows.forEach(function(r) {{
+      var product = r.product_name || 'Unknown';
+      var loc = r.location_name || 'Unspecified';
+      locationsSet[loc] = true;
+      byProduct[product] = byProduct[product] || {{}};
+      byProduct[product][loc] = (byProduct[product][loc] || 0) + (r.quantity || 0);
+    }});
+    var locations = Object.keys(locationsSet).sort();
+
+    var columns = [{{key: 'Product', label: 'Product', type: 'string'}}];
+    locations.forEach(function(loc) {{ columns.push({{key: loc, label: loc, type: 'number'}}); }});
+    columns.push({{key: 'Total', label: 'Total', type: 'number'}});
+
+    var pivotRows = Object.keys(byProduct).map(function(product) {{
+      var row = {{Product: product}};
+      var total = 0;
+      locations.forEach(function(loc) {{
+        var qty = byProduct[product][loc] || 0;
+        row[loc] = qty;
+        total += qty;
+      }});
+      row['Total'] = total;
+      return row;
+    }});
+
+    var sortColDef = columns.find(function(c) {{ return c.key === stockTableSortColumn; }}) || columns[0];
+    var sortedRows = sortGenericRows(pivotRows, stockTableSortColumn, stockTableSortAscending, sortColDef.type);
+
+    var bodyRows = sortedRows.map(function(row) {{
+      return '<tr>' + columns.map(function(col) {{
+        if (col.key === 'Product') return '<td>' + escapeHtml(row[col.key]) + '</td>';
+        return '<td>' + fmtQty(row[col.key]) + '</td>';
+      }}).join('') + '</tr>';
+    }}).join('');
+
+    document.getElementById('inventory-product-stock-table').innerHTML =
+      buildSortableHeaderRow(columns, stockTableSortColumn, stockTableSortAscending) + '<tbody>' + bodyRows + '</tbody>';
+  }}
+
+  document.getElementById('inventory-product-stock-table').addEventListener('click', function(e) {{
+    var btn = e.target.closest('[data-sort-key]');
+    if (!btn) return;
+    var key = btn.getAttribute('data-sort-key');
+    if (stockTableSortColumn === key) {{
+      stockTableSortAscending = !stockTableSortAscending;
+    }} else {{
+      stockTableSortColumn = key;
+      stockTableSortAscending = (key === 'Product');
+    }}
+    applyStockTable();
+  }});
+
+  buildStockTablePickerList();
+  applyStockTable();
 }})();
 </script>
 """
