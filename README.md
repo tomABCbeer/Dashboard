@@ -35,6 +35,26 @@ time you run the scripts — no need to set it in your terminal each
 session. `.env` is already listed in `.gitignore` so it won't get
 committed if you put this project in git.
 
+**Optional: the Square tab.** If you also want the Square tab (see
+"What's on the dashboard" below), generate a personal access token in
+the [Square Developer Dashboard](https://developer.squareup.com/):
+create or open an application → switch the environment toggle to
+**Production** → **Credentials** → copy the **Production Access
+Token**. A personal access token is what Square's own docs recommend
+for a custom integration that only ever touches your own account
+(rather than OAuth, which is for apps serving many different sellers)
+— but be aware it grants unrestricted access to your whole Square
+account, not just orders; Square doesn't offer finer-grained scoping
+for personal tokens. Add it to the same `.env` file:
+
+```
+SQUARE_ACCESS_TOKEN=EAAA...
+```
+
+If you skip this, the dashboard still works fine — the Square tab
+just shows a "not connected" message until you add a token and
+re-run `fetch_data.py`.
+
 ## Run it
 
 ```
@@ -47,7 +67,12 @@ The first `fetch_data.py` run pulls each endpoint's full history, so
 it'll take longer than later runs — expect it to page through
 everything Breww has. After that, re-runs are quick: they only pull
 what's new or changed and add it to the cache in `data/`, without
-losing anything already there.
+losing anything already there. If `SQUARE_ACCESS_TOKEN` is set, the
+same run also pulls Square's **entire** order history (see "Square"
+below) — this first pull can take a while if you process a high
+volume of individual Square transactions, since that's a much finer
+transaction grain than Breww's wholesale orders; every run after that
+is incremental, same as everything else.
 
 ## Project structure
 
@@ -578,6 +603,89 @@ The Dormant Customers table that used to sit here has moved to the
 Customer Report tab, under the new Invoice Aging table — see that
 section above; both are about specific customers' payment/order
 history, so they fit better there than among these two growth charts.
+
+**Square** (a new tab, built from Square's Locations and Orders APIs
+— see `square_client.py` and `square_tab.py` — not from Breww at all)
+
+This exists to solve a specific problem, not to be a general Square
+sales dashboard: Breww's own Square integration maps every line item
+in a Square sale to a Breww product individually, and if even *one*
+item on an order isn't mapped, Breww drops the **entire order** —
+silently missing inventory transactions for everything else on it too.
+That integration also creates one Breww order per Square order, which
+can mean hundreds of individual Breww orders from a single busy
+afternoon. This tab doesn't try to replicate or fix that integration —
+it's a simpler report of **what actually sold**, meant to be read
+directly when manually keying in one consolidated Breww transaction
+(e.g. "sold to Internal Event: 47 IPA pints, 32 Stout pints...") to
+cover everything that integration would otherwise mis-handle.
+
+Pick a **date range** (defaults to the most recent 7 days of cached
+data) and one or more **locations** (a checkbox multi-select,
+defaulting to all of them — Square accounts here tend to have one
+per pop-up event or farmers market in addition to the main taproom,
+and an inactive/retired location still shows up in the list with a
+visible status tag rather than disappearing, in case you need to
+reconcile something from before it went inactive). The resulting
+**Sales by Item** table aggregates every line item sold in that
+range/location(s) by item name *and* variation (e.g. "IPA" poured as
+a Pint vs. a Growler are tracked separately, since they're a
+different quantity of beer) — quantity and revenue, sortable by any
+column. Only orders in `config.SQUARE_ORDER_STATES` (default:
+`COMPLETED` only) are counted, matching how the rest of this
+dashboard already excludes cancelled Breww orders from being treated
+as real sales.
+
+A few implementation details worth knowing if this needs touching
+again:
+- Square's `Money` fields (like a line item's `gross_sales_money`)
+  are always in the smallest currency unit — cents for USD, not
+  dollars — `prepare_square_line_item_records` divides by 100 so
+  nothing downstream has to think about it.
+- Square's `SearchOrders` endpoint caps `location_ids` at 10 per
+  request — confirmed by a real `400 Bad Request` the first time this
+  ran against an account with more locations than that.
+  `square_client.py` batches into groups of 10 automatically and
+  makes one fully-paginated call per batch, combining the results —
+  callers (`fetch_data.py`) just pass every location id and don't need
+  to think about the limit. An order belongs to exactly one location,
+  so splitting into separate per-batch queries can't produce a
+  duplicate.
+- Square's `SearchOrders` endpoint has a hard requirement with no
+  documented way around it: if you filter by a timestamp field (this
+  fetch filters by `updated_at`), the query's sort field **must** be
+  set to that exact same field, or the API rejects the request
+  outright. `square_client.py` hardcodes both together for exactly
+  this reason — don't split them apart. When there's no cache yet, the
+  date filter is omitted entirely instead (a genuine all-time pull),
+  sorted by `CREATED_AT` instead — Square's own default sort field,
+  set explicitly here since there's no `UPDATED_AT` filter for it to
+  have to match in that case.
+- The very first Square fetch (no cache yet) pulls **all** order
+  history in one go, not a capped recent window — since that only
+  ever has to happen once. It can take a while given Square's much
+  finer transaction grain than Breww's wholesale orders (a single
+  busy afternoon can mean hundreds of individual orders), but every
+  run after that is incremental — only orders updated since the last
+  run, plus `config.SQUARE_INCREMENTAL_BUFFER_DAYS` (default 7) — same
+  pattern as Breww's own endpoints.
+- **New locations need no code change to show up.** Every
+  `fetch_data.py` run re-fetches the full location list from Square
+  (not incrementally — it's small and changes rarely) and passes
+  every location id it finds into that run's order search, so a
+  location added after the fact appears in the cache, the location
+  filter, and any of its orders get pulled in, automatically on the
+  very next run.
+- If `SQUARE_ACCESS_TOKEN` isn't set, the tab shows a "not connected"
+  message rather than an error — this is treated as "not configured
+  yet," not a failure, both in `fetch_data.py`'s exit code and in
+  what the tab displays.
+
+The Sales by Item table ends with a bold **Total** row (in a `tfoot`,
+not just another line in the list) summing quantity and revenue across
+whatever's currently filtered/sorted above it — the same numbers
+shown in the KPI cards above the table, just also available directly
+alongside the line items themselves.
 
 ## Filtering the three Orders charts
 
