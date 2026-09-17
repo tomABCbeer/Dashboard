@@ -11,7 +11,6 @@ import json
 
 import pandas as pd
 
-import config
 from shared import json_safe, _safe_float
 
 
@@ -73,20 +72,23 @@ def prepare_square_line_item_records(orders_df, locations_df):
 
 
 def build_square_section(orders_df, locations_df):
-    if not config.SQUARE_ACCESS_TOKEN:
+    if orders_df is None:
         return (
             "<h2>Square</h2>"
-            "<p class='missing'>Square isn't connected yet - set SQUARE_ACCESS_TOKEN "
-            "in your .env file, then run fetch_data.py, to enable this tab. "
-            "See the README for how to generate a token.</p>"
+            "<p class='missing'>No cached Square order data yet - if you haven't "
+            "set up Square yet, set SQUARE_ACCESS_TOKEN in your .env file (see the "
+            "README for how to generate a token), then run fetch_data.py. If you "
+            "have set it up already, check that fetch_data.py ran successfully and "
+            "actually had the token available when it ran.</p>"
         )
 
     line_items = prepare_square_line_item_records(orders_df, locations_df)
     if not line_items:
         return (
             "<h2>Square</h2>"
-            "<p class='missing'>No cached Square order data yet - run fetch_data.py "
-            "(needs SQUARE_ACCESS_TOKEN set first).</p>"
+            "<p class='missing'>Square order data is cached, but no line items "
+            "came out of it - double check the cached data in "
+            "data/square_orders.csv looks right.</p>"
         )
 
     line_items_json = json.dumps(line_items, allow_nan=False)

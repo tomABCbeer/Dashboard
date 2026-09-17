@@ -676,10 +676,24 @@ again:
   location added after the fact appears in the cache, the location
   filter, and any of its orders get pulled in, automatically on the
   very next run.
-- If `SQUARE_ACCESS_TOKEN` isn't set, the tab shows a "not connected"
-  message rather than an error — this is treated as "not configured
-  yet," not a failure, both in `fetch_data.py`'s exit code and in
-  what the tab displays.
+- The tab decides whether to show real data or a "not connected"
+  message by checking whether `data/square_orders.csv` actually has
+  anything in it — **not** by checking whether
+  `SQUARE_ACCESS_TOKEN` happens to be set in the process building the
+  dashboard. This matters because fetching and building run as two
+  separate steps (in GitHub Actions, potentially two separate jobs
+  with their own environment) — the token is only ever needed to
+  *fetch* Square data, never to *build* the static page from what's
+  already cached, so gating on it was an unnecessary and fragile
+  proxy for the real question. This also matches how every other tab
+  already decides the same thing (`if df is None`), rather than being
+  a special case. If you see the "not connected" message despite
+  having real Square data, that means the fetch step itself didn't
+  have the token available when it ran — check that
+  `SQUARE_ACCESS_TOKEN` is passed into *every* step of your workflow
+  that needs it, not just some of them (job-level `env:`, applied
+  once for the whole job, avoids this class of mistake entirely,
+  rather than repeating the secret in each step's own `env:` block).
 
 The Sales by Item table ends with a bold **Total** row (in a `tfoot`,
 not just another line in the list) summing quantity and revenue across
