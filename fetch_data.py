@@ -23,6 +23,7 @@ import pandas as pd
 
 import config
 from breww_client import BrewwClient, BrewwAPIError
+from square_client import SquareClient, SquareAPIError
 
 
 def flatten(records):
@@ -81,6 +82,80 @@ def merge_cache(existing_df, new_df, id_col="id"):
     return combined
 
 
+def fetch_square_data(results):
+    """Pull Square location and order data for the Square tab's "what
+    did we sell that needs a manual Breww reconciliation" report.
+
+    Genuinely different shape than the generic Breww endpoint loop
+    above, so it's handled separately rather than forced into that
+    same loop: it's a two-step process (locations first, since
+    SearchOrders needs their IDs), and Square's SearchOrders is a POST
+    with a cursor in the response body, not Breww's GET-with-query-
+    params pagination. Appends its own entries to the same `results`
+    list the Breww loop uses, so both flow through the same summary
+    printing and success/failure check at the end of main() without
+    needing special-casing there.
+
+    If SQUARE_ACCESS_TOKEN isn't set at all, this is treated as "the
+    Square tab isn't configured yet" rather than a failure - most
+    people running this dashboard for the first time won't have it
+    set, and that's fine; the tab just shows a "not configured" message
+    until it is."""
+    if not config.SQUARE_ACCESS_TOKEN:
+        print("No SQUARE_ACCESS_TOKEN set - skipping Square data (set it in .env to enable the Square tab).")
+        return
+
+    try:
+        client = SquareClient()
+    except SquareAPIError as e:
+        print(f"Square setup problem: {e}")
+        results.append(("square_orders", "skipped", str(e)))
+        return
+
+    print("Fetching Square locations ...")
+    try:
+        locations = client.list_locations()
+    except SquareAPIError as e:
+        print(f"  Skipped Square locations: {e}")
+        results.append(("square_locations", "skipped", str(e)))
+        return
+
+    locations_df = flatten(locations)
+    locations_path = os.path.join(config.DATA_DIR, "square_locations.csv")
+    locations_df.to_csv(locations_path, index=False)
+    print(f"  {len(locations_df)} locations cached in {locations_path}")
+    results.append(("square_locations", "ok", f"{len(locations_df)} rows cached"))
+
+    location_ids = [loc["id"] for loc in locations if loc.get("id")]
+    if not location_ids:
+        print("  No Square locations found - skipping orders (nothing to search).")
+        return
+
+    orders_path = os.path.join(config.DATA_DIR, "square_orders.csv")
+    existing_df = load_cache(orders_path)
+    since = latest_value(existing_df, "updated_at", config.SQUARE_INCREMENTAL_BUFFER_DAYS)
+    if since:
+        print(f"Fetching Square orders (updated since {since}) ...")
+    else:
+        print("Fetching Square orders (full pull - ALL history, no cache yet - this only happens once, but may take a while) ...")
+
+    try:
+        orders = client.search_orders(location_ids=location_ids, updated_since=since)
+    except SquareAPIError as e:
+        print(f"  Skipped Square orders: {e}")
+        results.append(("square_orders", "skipped", str(e)))
+        return
+
+    new_df = flatten(orders)
+    merged_df = merge_cache(existing_df, new_df)
+    if "id" in merged_df.columns:
+        merged_df = merged_df.sort_values("id")
+    merged_df.to_csv(orders_path, index=False)
+    prev_total = len(existing_df) if existing_df is not None else 0
+    print(f"  {len(new_df)} new/updated orders fetched -> {len(merged_df)} total cached (was {prev_total}) in {orders_path}")
+    results.append(("square_orders", "ok", f"{len(merged_df)} rows cached"))
+
+
 def main():
     os.makedirs(config.DATA_DIR, exist_ok=True)
 
@@ -136,6 +211,8 @@ def main():
             f"{len(merged_df)} total rows cached (was {prev_total}) in {out_path}"
         )
         results.append((name, "ok", f"{len(merged_df)} rows cached"))
+
+    fetch_square_data(results)
 
     any_success = any(status == "ok" for _, status, _ in results)
 

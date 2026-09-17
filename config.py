@@ -27,6 +27,43 @@ AUTH_HEADER_PREFIX = "Bearer"
 
 BASE_URL = "https://breww.com/api"
 
+# --- Square (Orders/Locations APIs, for the Square tab) ------------------
+# Put your token in the same .env file:
+#
+#     SQUARE_ACCESS_TOKEN=EAAA...
+#
+# Generate it in the Square Developer Dashboard (developer.squareup.com):
+# your application -> switch the environment toggle to Production ->
+# Credentials -> Production Access Token. This is a PERSONAL access
+# token - Square's own docs recommend this (over OAuth) specifically
+# for a custom integration that only ever accesses your own account,
+# which is exactly what this is. Be aware it grants unrestricted access
+# to your whole Square account, not just orders - Square doesn't offer
+# finer-grained scoping for personal tokens.
+SQUARE_ACCESS_TOKEN = os.environ.get("SQUARE_ACCESS_TOKEN", "")
+
+SQUARE_BASE_URL = "https://connect.squareup.com"
+
+# Square's APIs are date-versioned - an older version keeps working
+# indefinitely by design (that's the point of versioning it), so this
+# doesn't need to be bumped often. Update it if Square deprecates this
+# version or you want to pick up newer response fields.
+SQUARE_API_VERSION = "2025-01-01"
+
+# The very first Square fetch (no cache yet) pulls ALL order history,
+# not a capped window - since it only ever has to happen once, and
+# every run after that is incremental (only orders updated since the
+# last run, plus a small buffer, matching the same pattern already
+# used for Breww's own endpoints). Only that ongoing incremental
+# buffer needs a config value; the first pull has no cap to configure.
+SQUARE_INCREMENTAL_BUFFER_DAYS = 7
+
+# Only orders in these states count as real, completed sales - matches
+# how the rest of this dashboard already excludes Cancelled Breww
+# orders. DRAFT and OPEN orders aren't finished transactions yet, and
+# CANCELED ones were reversed.
+SQUARE_ORDER_STATES = ["COMPLETED"]
+
 # --- Which data to pull -------------------------------------------------
 # Endpoint paths are taken directly from Breww's published OpenAPI spec
 # (orders_list, drink_batches_list, stock_received_list operations).

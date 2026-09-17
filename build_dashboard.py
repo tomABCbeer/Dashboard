@@ -17,6 +17,7 @@ from inventory_tab import build_stock_section
 from customer_report_tab import build_customer_report_section
 from forecast_tab import build_forecast_section
 from growth_efficiency_tab import build_growth_efficiency_section
+from square_tab import build_square_section
 
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -119,6 +120,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <button class="tab-btn" type="button" data-tab="customer-report">Customer Report</button>
   <button class="tab-btn" type="button" data-tab="forecast">Forecast</button>
   <button class="tab-btn" type="button" data-tab="growth-efficiency">Growth &amp; Efficiency</button>
+  <button class="tab-btn" type="button" data-tab="square">Square</button>
 </div>
 
 <div class="tab-panel" id="tab-orders" data-tab-panel="orders">{orders_html}</div>
@@ -127,6 +129,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <div class="tab-panel" id="tab-customer-report" data-tab-panel="customer-report" hidden>{customer_report_html}</div>
 <div class="tab-panel" id="tab-forecast" data-tab-panel="forecast" hidden>{forecast_html}</div>
 <div class="tab-panel" id="tab-growth-efficiency" data-tab-panel="growth-efficiency" hidden>{growth_efficiency_html}</div>
+<div class="tab-panel" id="tab-square" data-tab-panel="square" hidden>{square_html}</div>
 
 <script>
 (function() {{
@@ -175,6 +178,8 @@ def main():
     fulfillments_df = load_csv("fulfillments")
     packagings_df = load_csv("planned_packagings")
     customers_df = load_csv("customers_suppliers")
+    square_orders_df = load_csv("square_orders")
+    square_locations_df = load_csv("square_locations")
 
     generated_at_et = pd.Timestamp.now(tz="UTC").tz_convert("America/New_York").strftime("%Y-%m-%d %H:%M %Z")
 
@@ -189,6 +194,7 @@ def main():
         customer_report_html=build_customer_report_section(customers_df),
         forecast_html=build_forecast_section(fulfillments_df, packagings_df, products_df, batches_df),
         growth_efficiency_html=build_growth_efficiency_section(),
+        square_html=build_square_section(square_orders_df, square_locations_df),
     )
 
     with open(config.OUTPUT_HTML, "w") as f:

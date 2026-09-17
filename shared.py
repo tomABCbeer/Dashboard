@@ -17,7 +17,10 @@ def load_csv(name):
     path = os.path.join(config.DATA_DIR, f"{name}.csv")
     if not os.path.exists(path):
         return None
-    df = pd.read_csv(path)
+    try:
+        df = pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return None
     if df.empty:
         return None
     return df
