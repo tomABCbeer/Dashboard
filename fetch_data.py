@@ -126,6 +126,21 @@ def fetch_square_data(results):
     print(f"  {len(locations_df)} locations cached in {locations_path}")
     results.append(("square_locations", "ok", f"{len(locations_df)} rows cached"))
 
+    print("Fetching Square catalog (for item categories) ...")
+    try:
+        catalog_objects = client.list_catalog()
+        catalog_df = flatten(catalog_objects)
+        catalog_path = os.path.join(config.DATA_DIR, "square_catalog.csv")
+        catalog_df.to_csv(catalog_path, index=False)
+        print(f"  {len(catalog_df)} catalog objects cached in {catalog_path}")
+        results.append(("square_catalog", "ok", f"{len(catalog_df)} rows cached"))
+    except SquareAPIError as e:
+        # Not fatal - the Square tab just shows "Uncategorized" for
+        # everything if this is missing, it doesn't need the catalog
+        # to show orders/sales at all.
+        print(f"  Skipped Square catalog (categories will show as Uncategorized): {e}")
+        results.append(("square_catalog", "skipped", str(e)))
+
     location_ids = [loc["id"] for loc in locations if loc.get("id")]
     if not location_ids:
         print("  No Square locations found - skipping orders (nothing to search).")

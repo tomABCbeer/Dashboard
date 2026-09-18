@@ -179,6 +179,7 @@ def main():
     packagings_df = load_csv("planned_packagings")
     customers_df = load_csv("customers_suppliers")
     square_orders_df = load_csv("square_orders")
+    square_catalog_df = load_csv("square_catalog")
     square_locations_df = load_csv("square_locations")
 
     generated_at_et = pd.Timestamp.now(tz="UTC").tz_convert("America/New_York").strftime("%Y-%m-%d %H:%M %Z")
@@ -194,7 +195,7 @@ def main():
         customer_report_html=build_customer_report_section(customers_df),
         forecast_html=build_forecast_section(fulfillments_df, packagings_df, products_df, batches_df),
         growth_efficiency_html=build_growth_efficiency_section(),
-        square_html=build_square_section(square_orders_df, square_locations_df),
+        square_html=build_square_section(square_orders_df, square_locations_df, square_catalog_df),
     )
 
     with open(config.OUTPUT_HTML, "w") as f:

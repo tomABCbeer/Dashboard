@@ -74,6 +74,35 @@ class SquareClient:
             params = {"cursor": cursor}
         return locations
 
+    def list_catalog(self, types="ITEM,ITEM_VARIATION,CATEGORY"):
+        """GET /v2/catalog/list - every catalog object of the given
+        types, mixed together in one list (each has its own "type"
+        field, e.g. "ITEM"/"ITEM_VARIATION"/"CATEGORY" - the caller
+        sorts them out). No documented way to filter by date here, so
+        (like Breww's own products/drinks endpoints) this is always a
+        full refresh, not incremental - a catalog is small and slow-
+        changing enough that this is cheap regardless.
+
+        Used to resolve an order line item's category: a line item's
+        catalog_object_id points to an ITEM_VARIATION, which has its
+        own parent ITEM (item_variation_data.item_id), which has a
+        reporting_category or categories reference (item_data), which
+        points to a CATEGORY object with the actual display name
+        (category_data.name). None of that chain is available from
+        order data alone - this is the only way to get it."""
+        objects = []
+        url = f"{self.base_url}/v2/catalog/list"
+        params = {"types": types}
+        while True:
+            resp = self._request("get", url, path="/v2/catalog/list", params=params)
+            payload = resp.json()
+            objects.extend(payload.get("objects", []))
+            cursor = payload.get("cursor")
+            if not cursor:
+                break
+            params = {"types": types, "cursor": cursor}
+        return objects
+
     def search_orders(self, location_ids, updated_since=None, states=None, max_pages=500, sleep_between=0.5):
         """POST /v2/orders/search, across as many location_ids as
         given. Square caps location_ids at 10 per request (a hard

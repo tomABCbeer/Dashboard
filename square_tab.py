@@ -11,17 +11,83 @@ import json
 
 import pandas as pd
 
-from shared import json_safe, _safe_float
+from shared import json_safe, _safe_float, _parse_json_list
 
 
-def prepare_square_line_item_records(orders_df, locations_df):
+def build_catalog_category_map(catalog_df):
+    """Resolves an order line item's catalog_object_id (an
+    ITEM_VARIATION id) all the way to its category NAME, by walking
+    the chain Square actually uses: variation -> parent item
+    (item_variation_data.item_id) -> the item's category reference
+    (item_data.reporting_category.id, falling back to the first of
+    item_data.categories if that's not set - Square added both in the
+    same API update, with reporting_category specifically meant for
+    "reporting or displaying purposes," which is exactly this use
+    case) -> category NAME (category_data.name). None of this is in
+    the order data itself - it's a separate concern of Square's
+    Catalog API, which is why /v2/catalog/list gets pulled at all.
+
+    Returns a flat variation_id -> category_name map, so callers only
+    ever need one lookup, never the three-hop chain. Every hop here
+    can fail to resolve for ordinary reasons (an item removed from the
+    catalog since, one with no category assigned, a name that just
+    isn't in the cached catalog) - this returns whatever DOES resolve;
+    the caller decides what a missing category should display as."""
+    if catalog_df is None or catalog_df.empty:
+        return {}
+
+    category_name_by_id = {}
+    item_to_category_id = {}
+    variation_to_item_id = {}
+
+    for _, row in catalog_df.iterrows():
+        obj_type = row.get("type")
+        obj_id = row.get("id")
+        if not obj_id or (isinstance(obj_id, float) and pd.isna(obj_id)):
+            continue
+
+        if obj_type == "CATEGORY":
+            name = row.get("category_data.name")
+            if name and not (isinstance(name, float) and pd.isna(name)):
+                category_name_by_id[obj_id] = name
+
+        elif obj_type == "ITEM":
+            category_id = row.get("item_data.reporting_category.id")
+            if category_id is None or (isinstance(category_id, float) and pd.isna(category_id)):
+                categories_list = _parse_json_list(row.get("item_data.categories"))
+                if categories_list and isinstance(categories_list[0], dict):
+                    category_id = categories_list[0].get("id")
+            if category_id and not (isinstance(category_id, float) and pd.isna(category_id)):
+                item_to_category_id[obj_id] = category_id
+
+        elif obj_type == "ITEM_VARIATION":
+            item_id = row.get("item_variation_data.item_id")
+            if item_id and not (isinstance(item_id, float) and pd.isna(item_id)):
+                variation_to_item_id[obj_id] = item_id
+
+    variation_to_category_name = {}
+    for variation_id, item_id in variation_to_item_id.items():
+        category_id = item_to_category_id.get(item_id)
+        category_name = category_name_by_id.get(category_id) if category_id else None
+        if category_name:
+            variation_to_category_name[variation_id] = category_name
+    return variation_to_category_name
+
+
+def prepare_square_line_item_records(orders_df, locations_df, catalog_category_map=None):
     """Explode each cached Square order's line_items into one record
     per item sold, joined with that order's location name. Quantity
     and money amounts come back from Square as strings/cents
     respectively - both are converted here (money from cents to
-    dollars) so nothing downstream has to think about it again."""
+    dollars) so nothing downstream has to think about it again.
+    Category comes from catalog_category_map (see
+    build_catalog_category_map) via each line item's own
+    catalog_object_id - "Uncategorized" for anything that doesn't
+    resolve (no catalog cached, no category assigned, item since
+    removed from the catalog, etc.)."""
     if orders_df is None or orders_df.empty:
         return []
+    catalog_category_map = catalog_category_map or {}
 
     location_name_by_id = {}
     if locations_df is not None:
@@ -57,6 +123,7 @@ def prepare_square_line_item_records(orders_df, locations_df):
                 continue
             money = item.get("gross_sales_money") or {}
             revenue_cents = _safe_float(money.get("amount"), default=0.0)
+            category = catalog_category_map.get(item.get("catalog_object_id")) or "Uncategorized"
 
             records.append({
                 "order_id": json_safe(row.get("id")),
@@ -65,13 +132,14 @@ def prepare_square_line_item_records(orders_df, locations_df):
                 "date": created_date,
                 "item_name": json_safe(item.get("name") or "Unknown item"),
                 "variation_name": json_safe(item.get("variation_name")),
+                "category": json_safe(category),
                 "quantity": quantity,
                 "revenue": revenue_cents / 100.0,
             })
     return records
 
 
-def build_square_section(orders_df, locations_df):
+def build_square_section(orders_df, locations_df, catalog_df=None):
     if orders_df is None:
         return (
             "<h2>Square</h2>"
@@ -82,7 +150,8 @@ def build_square_section(orders_df, locations_df):
             "actually had the token available when it ran.</p>"
         )
 
-    line_items = prepare_square_line_item_records(orders_df, locations_df)
+    catalog_category_map = build_catalog_category_map(catalog_df)
+    line_items = prepare_square_line_item_records(orders_df, locations_df, catalog_category_map)
     if not line_items:
         return (
             "<h2>Square</h2>"
@@ -131,6 +200,25 @@ def build_square_section(orders_df, locations_df):
         <div class="filter-actions" style="padding:8px;">
           <button type="button" id="square-location-select-all">Select all</button>
           <button type="button" id="square-location-select-none">Select none</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="filter-group">
+    <label>Categories</label>
+    <div class="customer-dropdown" id="square-category-dropdown">
+      <button type="button" class="customer-dropdown-toggle" id="square-category-toggle">
+        <span id="square-category-summary">All categories</span>
+        <span class="filter-dropdown-caret">&#9662;</span>
+      </button>
+      <div class="customer-dropdown-panel" id="square-category-panel" hidden>
+        <input type="text" id="square-category-search" class="customer-search-input"
+               placeholder="Search categories&hellip;" autocomplete="off">
+        <div id="square-category-list"></div>
+        <p id="square-category-empty" class="product-search-empty" hidden>No categories match your search.</p>
+        <div class="filter-actions" style="padding:8px;">
+          <button type="button" id="square-category-select-all">Select all</button>
+          <button type="button" id="square-category-select-none">Select none</button>
         </div>
       </div>
     </div>
@@ -248,6 +336,93 @@ def build_square_section(orders_df, locations_df):
     applySquareReport();
   }});
 
+  // --- Category multi-select dropdown (same pattern as locations above) ---
+  var allCategories = Array.from(new Set(lineItems.map(function(r) {{ return r.category; }})
+    .filter(function(v) {{ return v; }}))).sort();
+  var selectedCategories = {{}};
+  allCategories.forEach(function(cat) {{ selectedCategories[cat] = true; }});  // all selected by default
+
+  var catDropdown = document.getElementById('square-category-dropdown');
+  var catPanel = document.getElementById('square-category-panel');
+  var catToggle = document.getElementById('square-category-toggle');
+  var catSearchInput = document.getElementById('square-category-search');
+  var catListDiv = document.getElementById('square-category-list');
+  var catSummary = document.getElementById('square-category-summary');
+  var catEmptyMsg = document.getElementById('square-category-empty');
+
+  function updateCategorySummary() {{
+    var selectedCount = Object.keys(selectedCategories).filter(function(c) {{ return selectedCategories[c]; }}).length;
+    if (selectedCount === allCategories.length) {{
+      catSummary.textContent = 'All categories';
+    }} else if (selectedCount === 0) {{
+      catSummary.textContent = 'No categories selected';
+    }} else {{
+      catSummary.textContent = selectedCount + ' categor' + (selectedCount === 1 ? 'y' : 'ies') + ' selected';
+    }}
+  }}
+
+  function buildCategoryList() {{
+    catListDiv.innerHTML = allCategories.map(function(cat) {{
+      var safe = escapeHtml(cat);
+      var checked = selectedCategories[cat] ? 'checked' : '';
+      return '<label class="filter-row" data-search="' + safe.toLowerCase() + '">' +
+        '<input type="checkbox" data-cat-id="' + safe + '" ' + checked + '> ' + safe +
+        '</label>';
+    }}).join('') || '<span style="font-size:12px;color:#a39a8c;">No categories found</span>';
+  }}
+
+  function filterCategoryRows(query) {{
+    var q = query.trim().toLowerCase();
+    var rows = catListDiv.querySelectorAll('.filter-row');
+    var anyVisible = false;
+    rows.forEach(function(row) {{
+      var matches = !q || row.getAttribute('data-search').indexOf(q) !== -1;
+      row.style.display = matches ? '' : 'none';
+      if (matches) anyVisible = true;
+    }});
+    if (catEmptyMsg) catEmptyMsg.hidden = anyVisible || rows.length === 0;
+  }}
+
+  function openCatDropdown() {{
+    catPanel.hidden = false;
+    catSearchInput.value = '';
+    filterCategoryRows('');
+    catSearchInput.focus();
+  }}
+  function closeCatDropdown() {{ catPanel.hidden = true; }}
+
+  catToggle.addEventListener('click', function() {{
+    if (catPanel.hidden) {{ openCatDropdown(); }} else {{ closeCatDropdown(); }}
+  }});
+  catSearchInput.addEventListener('input', function() {{ filterCategoryRows(catSearchInput.value); }});
+  document.addEventListener('click', function(e) {{
+    if (!catDropdown.contains(e.target)) closeCatDropdown();
+  }});
+  catDropdown.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{ closeCatDropdown(); catToggle.focus(); }}
+  }});
+
+  catListDiv.addEventListener('change', function(e) {{
+    var checkbox = e.target.closest('[data-cat-id]');
+    if (!checkbox) return;
+    selectedCategories[checkbox.getAttribute('data-cat-id')] = checkbox.checked;
+    updateCategorySummary();
+    applySquareReport();
+  }});
+
+  document.getElementById('square-category-select-all').addEventListener('click', function() {{
+    allCategories.forEach(function(cat) {{ selectedCategories[cat] = true; }});
+    buildCategoryList();
+    updateCategorySummary();
+    applySquareReport();
+  }});
+  document.getElementById('square-category-select-none').addEventListener('click', function() {{
+    allCategories.forEach(function(cat) {{ selectedCategories[cat] = false; }});
+    buildCategoryList();
+    updateCategorySummary();
+    applySquareReport();
+  }});
+
   beginInput.addEventListener('change', applySquareReport);
   endInput.addEventListener('change', applySquareReport);
 
@@ -255,6 +430,7 @@ def build_square_section(orders_df, locations_df):
   var SALES_COLUMNS = [
     {{key: 'item_name', label: 'Item', type: 'string'}},
     {{key: 'variation_name', label: 'Variation', type: 'string'}},
+    {{key: 'category', label: 'Category', type: 'string'}},
     {{key: 'quantity', label: 'Quantity', type: 'number'}},
     {{key: 'revenue', label: 'Revenue', type: 'number'}}
   ];
@@ -270,6 +446,7 @@ def build_square_section(orders_df, locations_df):
 
     var filtered = lineItems.filter(function(r) {{
       if (!selectedLocationIds[r.location_id]) return false;
+      if (!selectedCategories[r.category]) return false;
       if (beginVal && (!r.date || r.date < beginVal)) return false;
       if (endVal && (!r.date || r.date > endVal)) return false;
       return true;
@@ -277,9 +454,9 @@ def build_square_section(orders_df, locations_df):
 
     var byItem = {{}};
     filtered.forEach(function(r) {{
-      var key = r.item_name + '|||' + (r.variation_name || '');
+      var key = r.item_name + '|||' + (r.variation_name || '') + '|||' + r.category;
       if (!byItem[key]) {{
-        byItem[key] = {{item_name: r.item_name, variation_name: r.variation_name || '', quantity: 0, revenue: 0}};
+        byItem[key] = {{item_name: r.item_name, variation_name: r.variation_name || '', category: r.category, quantity: 0, revenue: 0}};
       }}
       byItem[key].quantity += r.quantity;
       byItem[key].revenue += r.revenue;
@@ -292,20 +469,21 @@ def build_square_section(orders_df, locations_df):
       '<div class="kpi-row"><div class="kpi"><div class="kpi-value">' + fmtQty(totalQty) + '</div><div class="kpi-label">Total items sold</div></div>' +
       '<div class="kpi"><div class="kpi-value">' + fmtMoney(totalRevenue) + '</div><div class="kpi-label">Total revenue</div></div></div>';
 
-    var sortColDef = SALES_COLUMNS.find(function(c) {{ return c.key === salesSortColumn; }}) || SALES_COLUMNS[2];
+    var sortColDef = SALES_COLUMNS.find(function(c) {{ return c.key === salesSortColumn; }}) || SALES_COLUMNS[3];
     var sortedRows = sortGenericRows(rows, salesSortColumn, salesSortAscending, sortColDef.type);
 
     var bodyRows = sortedRows.map(function(r) {{
       return '<tr>' +
         '<td>' + escapeHtml(r.item_name) + '</td>' +
         '<td>' + escapeHtml(r.variation_name || '\\u2014') + '</td>' +
+        '<td>' + escapeHtml(r.category) + '</td>' +
         '<td>' + fmtQty(r.quantity) + '</td>' +
         '<td>' + fmtMoney(r.revenue) + '</td>' +
         '</tr>';
     }}).join('');
 
     var totalRow = '<tr style="font-weight:600; border-top:2px solid #e4dcc9;">' +
-      '<td>Total</td><td></td><td>' + fmtQty(totalQty) + '</td><td>' + fmtMoney(totalRevenue) + '</td></tr>';
+      '<td>Total</td><td></td><td></td><td>' + fmtQty(totalQty) + '</td><td>' + fmtMoney(totalRevenue) + '</td></tr>';
 
     document.getElementById('square-sales-table').innerHTML =
       buildSortableHeaderRow(SALES_COLUMNS, salesSortColumn, salesSortAscending) +
@@ -328,6 +506,8 @@ def build_square_section(orders_df, locations_df):
 
   buildLocationList();
   updateLocationSummary();
+  buildCategoryList();
+  updateCategorySummary();
   applySquareReport();
 }})();
 </script>

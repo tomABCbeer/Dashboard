@@ -621,23 +621,50 @@ directly when manually keying in one consolidated Breww transaction
 cover everything that integration would otherwise mis-handle.
 
 Pick a **date range** (defaults to the most recent 7 days of cached
-data) and one or more **locations** (a checkbox multi-select,
-defaulting to all of them — Square accounts here tend to have one
-per pop-up event or farmers market in addition to the main taproom,
-and an inactive/retired location still shows up in the list with a
-visible status tag rather than disappearing, in case you need to
-reconcile something from before it went inactive). The resulting
-**Sales by Item** table aggregates every line item sold in that
-range/location(s) by item name *and* variation (e.g. "IPA" poured as
-a Pint vs. a Growler are tracked separately, since they're a
-different quantity of beer) — quantity and revenue, sortable by any
-column. Only orders in `config.SQUARE_ORDER_STATES` (default:
+data), one or more **locations**, and one or more **categories** —
+both checkbox multi-selects, both defaulting to everything selected.
+Square accounts here tend to have one location per pop-up event or
+farmers market in addition to the main taproom, and an
+inactive/retired location still shows up in the list with a visible
+status tag rather than disappearing, in case you need to reconcile
+something from before it went inactive. The resulting **Sales by
+Item** table aggregates every line item sold in that
+range/location(s)/categor(ies) by item name, variation, *and*
+category (e.g. "IPA" poured as a Pint vs. a Growler are tracked
+separately, since they're a different quantity of beer) — quantity
+and revenue, sortable by any column, with a bold **Total** row at the
+bottom. Only orders in `config.SQUARE_ORDER_STATES` (default:
 `COMPLETED` only) are counted, matching how the rest of this
 dashboard already excludes cancelled Breww orders from being treated
 as real sales.
 
+**Category** doesn't come from the order data at all — resolving it
+means walking a three-hop chain through Square's separate Catalog
+API: a line item's `catalog_object_id` (an item *variation*) → that
+variation's parent item (`item_variation_data.item_id`) → the item's
+category reference (`item_data.reporting_category.id`, falling back
+to the first entry of `item_data.categories` if that's not set — see
+`build_catalog_category_map` in `square_tab.py`) → the category
+object's actual name (`category_data.name`). `list_catalog()` in
+`square_client.py` pulls the whole catalog in one go (items,
+variations, and categories together, via `/v2/catalog/list`) so this
+chain can be resolved locally rather than looked up one item at a
+time. Anything that doesn't resolve at any point in that chain — no
+catalog cached at all, an item with no category assigned, an item
+since removed from the catalog — shows as **Uncategorized** rather
+than blank or broken.
+
 A few implementation details worth knowing if this needs touching
 again:
+- There's a real, if unconfirmed against this specific account, risk
+  worth knowing about: some developers have reported `/v2/catalog/list`
+  returning fewer fields via a direct API call than through Square's
+  own interactive API explorer — specifically missing `categories`
+  and `reporting_category`, the exact fields this depends on. If
+  every item shows as Uncategorized despite the catalog clearly
+  having categories set up in Square's own dashboard, this is the
+  first thing to check — inspect `data/square_catalog.csv` directly
+  to see whether those fields actually came back.
 - Square's `Money` fields (like a line item's `gross_sales_money`)
   are always in the smallest currency unit — cents for USD, not
   dollars — `prepare_square_line_item_records` divides by 100 so
