@@ -184,6 +184,8 @@ def build_orders_section(df, customer_types_df, order_lines_df, products_df=None
     return f"""
 <h2>Orders</h2>
 
+<div class="kpi-row" id="orders-kpi-row"></div>
+
 <h3>Sales by Month</h3>
 <p class="section-note">Net sales value by month, stacked by order status, with every prior year plotted as a dashed comparison line.</p>
 <div class="filters-panel" id="month-filters">
@@ -193,8 +195,6 @@ def build_orders_section(df, customer_types_df, order_lines_df, products_df=None
     <button id="btn-reset-month-filters">Reset</button>
   </div>
 </div>
-
-<div class="kpi-row" id="orders-kpi-row"></div>
 
 <div id="chart-sales-by-month" class="chart-div"></div>
 
@@ -337,12 +337,18 @@ def build_orders_section(df, customer_types_df, order_lines_df, products_df=None
   }}
 
   function updateKPIs(rows) {{
-    var count = rows.length;
-    var totalValue = rows.reduce(function(s, r) {{ return s + (r.total || 0); }}, 0);
+    var todayKey = new Date().toISOString().slice(0, 10);
+    var yearStartKey = todayKey.slice(0, 4) + '-01-01';
+    var ytdRows = rows.filter(function(r) {{
+      return r.issue_date && r.issue_date >= yearStartKey && r.issue_date <= todayKey;
+    }});
+
+    var count = ytdRows.length;
+    var totalValue = ytdRows.reduce(function(s, r) {{ return s + (r.total || 0); }}, 0);
     var amountDue = rows.reduce(function(s, r) {{ return s + (r.amount_due || 0); }}, 0);
     document.getElementById('orders-kpi-row').innerHTML =
-      '<div class="kpi"><div class="kpi-value">' + count.toLocaleString() + '</div><div class="kpi-label">Orders (all-time)</div></div>' +
-      '<div class="kpi"><div class="kpi-value">' + fmtMoney(totalValue) + '</div><div class="kpi-label">Total order value (all-time)</div></div>' +
+      '<div class="kpi"><div class="kpi-value">' + count.toLocaleString() + '</div><div class="kpi-label">Orders (year to date)</div></div>' +
+      '<div class="kpi"><div class="kpi-value">' + fmtMoney(totalValue) + '</div><div class="kpi-label">Total order value (year to date)</div></div>' +
       '<div class="kpi"><div class="kpi-value">' + fmtMoney(amountDue) + '</div><div class="kpi-label">Amount still due (all-time)</div></div>';
   }}
 

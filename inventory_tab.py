@@ -338,6 +338,7 @@ def build_products_subsection(products_df):
     location_item_html = filter_dropdown_html("inventory-product-location", "Product", "products")
     top_items_html = filter_dropdown_html("inventory-product-top", "Product", "products")
     location_pie_html = filter_dropdown_html("inventory-product-location-pie", "Product", "products")
+    stock_table_filter_html = filter_dropdown_html("inventory-product-table", "Product", "products")
 
     lot_count = len(records)
     total_value = sum(r.get("value") or 0 for r in records)
@@ -381,22 +382,11 @@ def build_products_subsection(products_df):
 <div id="chart-inventory-product-by-location-pie" class="chart-div"></div>
 
 <h4>Product Stock by Location</h4>
-<p class="section-note">Every product's current quantity, broken out by location - pick a beer to see all its products together, or narrow to one specific product. Click any column header to sort.</p>
+<p class="section-note">Every product's current quantity, broken out by location - pick individual products and/or whole beers (all their formats together). Click any column header to sort.</p>
 <div class="chart-scoped-filter" id="inventory-product-table-filters">
-  <div class="filter-group">
-    <label>Beer or product</label>
-    <div class="customer-dropdown" id="inventory-product-table-dropdown">
-      <button type="button" class="customer-dropdown-toggle" id="inventory-product-table-toggle">
-        <span id="inventory-product-table-summary">All Products</span>
-        <span class="filter-dropdown-caret">&#9662;</span>
-      </button>
-      <div class="customer-dropdown-panel" id="inventory-product-table-panel" hidden>
-        <input type="text" id="inventory-product-table-search" class="customer-search-input"
-               placeholder="Search beers and products&hellip;" autocomplete="off">
-        <div id="inventory-product-table-list"></div>
-        <p id="inventory-product-table-empty" class="product-search-empty" hidden>No beers or products match your search.</p>
-      </div>
-    </div>
+{stock_table_filter_html}
+  <div class="filter-actions">
+    <button id="btn-reset-inventory-product-table-filters">Reset</button>
   </div>
 </div>
 <div class="table-wrap">
@@ -412,9 +402,11 @@ def build_products_subsection(products_df):
 
   var allProducts = Array.from(new Set(rawProducts.map(function(r) {{ return r.product_name; }})
     .filter(function(v) {{ return v; }}))).sort();
+  var groupedOptions = buildGroupedFilterOptions(allProducts);
 
-  function filterProducts(products) {{
-    return rawProducts.filter(function(r) {{ return products.indexOf(r.product_name) !== -1; }});
+  function filterProducts(selectedLabels) {{
+    var expanded = groupedOptions.expand(selectedLabels);
+    return rawProducts.filter(function(r) {{ return expanded.indexOf(r.product_name) !== -1; }});
   }}
 
   function updateProductsByLocation(rows) {{
@@ -459,13 +451,12 @@ def build_products_subsection(products_df):
     }}
 
     Plotly.react('chart-inventory-product-by-location', traces, {{
-      barmode: 'stack', template: 'plotly_white', title: 'Current Inventory of Products by Location',
+      barmode: 'group', template: 'plotly_white', title: 'Current Inventory of Products by Location',
       height: 500, margin: {{r: 30, t: 60, b: 130, l: 70}},
       legend: {{orientation: 'h', x: 0, xanchor: 'left', y: -0.22, yanchor: 'top', title: {{text: ''}}}},
       yaxis: {{title: 'Quantity'}}, xaxis: {{title: ''}}
     }}, {{displayModeBar: false, responsive: true}});
   }}
-
   function updateTopProducts(rows) {{
     var sums = {{}};
     rows.forEach(function(r) {{
@@ -496,17 +487,17 @@ def build_products_subsection(products_df):
   }}
 
   var productLocationFilter = createSearchableFilter({{
-    prefix: 'inventory-product-location', allValues: allProducts, defaultValues: allProducts.slice(),
+    prefix: 'inventory-product-location', allValues: groupedOptions.labels, defaultValues: groupedOptions.labels.slice(),
     presetsKey: 'abco_dashboard_shared_presets_inventory_product_v1',
     onApply: function() {{ applyProductLocationChart(); }}
   }});
   var productTopFilter = createSearchableFilter({{
-    prefix: 'inventory-product-top', allValues: allProducts, defaultValues: allProducts.slice(),
+    prefix: 'inventory-product-top', allValues: groupedOptions.labels, defaultValues: groupedOptions.labels.slice(),
     presetsKey: 'abco_dashboard_shared_presets_inventory_product_v1',
     onApply: function() {{ applyProductTopChart(); }}
   }});
   var productLocationPieFilter = createSearchableFilter({{
-    prefix: 'inventory-product-location-pie', allValues: allProducts, defaultValues: allProducts.slice(),
+    prefix: 'inventory-product-location-pie', allValues: groupedOptions.labels, defaultValues: groupedOptions.labels.slice(),
     presetsKey: 'abco_dashboard_shared_presets_inventory_product_v1',
     onApply: function() {{ applyProductLocationPieChart(); }}
   }});
@@ -539,67 +530,18 @@ def build_products_subsection(products_df):
   applyProductLocationPieChart();
 
   // ===================== Product Stock by Location table =====================
-  // Uses the shared beer-or-product grouping (buildBeerOrProductPickerEntries,
-  // in shared.py) - the same picker pattern as the Forecast tab, but
-  // with a synthetic "All Products" entry prepended and selected by
-  // default, since this table's natural starting point is showing
-  // everything rather than requiring an explicit pick first.
-  var stockTablePickerEntries = buildBeerOrProductPickerEntries(allProducts, true);
-  var stockTableSelectedEntry = stockTablePickerEntries[0];
-
-  var stockTableDropdown = document.getElementById('inventory-product-table-dropdown');
-  var stockTablePanel = document.getElementById('inventory-product-table-panel');
-  var stockTableToggle = document.getElementById('inventory-product-table-toggle');
-  var stockTableSearchInput = document.getElementById('inventory-product-table-search');
-  var stockTableListDiv = document.getElementById('inventory-product-table-list');
-  var stockTableSummary = document.getElementById('inventory-product-table-summary');
-  var stockTableEmptyMsg = document.getElementById('inventory-product-table-empty');
-
-  function buildStockTablePickerList() {{
-    stockTableListDiv.innerHTML = stockTablePickerEntries.map(function(entry, i) {{
-      var safe = escapeHtml(entry.label);
-      return '<label class="customer-row" data-search="' + safe.toLowerCase() + '" data-index="' + i + '">' + safe + '</label>';
-    }}).join('') || '<span style="font-size:12px;color:#a39a8c;">No beers or products found</span>';
-  }}
-
-  function filterStockTableRows(query) {{
-    var q = query.trim().toLowerCase();
-    var rows = stockTableListDiv.querySelectorAll('.customer-row');
-    var anyVisible = false;
-    rows.forEach(function(row) {{
-      var matches = !q || row.getAttribute('data-search').indexOf(q) !== -1;
-      row.style.display = matches ? '' : 'none';
-      if (matches) anyVisible = true;
-    }});
-    if (stockTableEmptyMsg) stockTableEmptyMsg.hidden = anyVisible || rows.length === 0;
-  }}
-
-  function openStockTableDropdown() {{
-    stockTablePanel.hidden = false;
-    stockTableSearchInput.value = '';
-    filterStockTableRows('');
-    stockTableSearchInput.focus();
-  }}
-  function closeStockTableDropdown() {{ stockTablePanel.hidden = true; }}
-
-  stockTableToggle.addEventListener('click', function() {{
-    if (stockTablePanel.hidden) {{ openStockTableDropdown(); }} else {{ closeStockTableDropdown(); }}
+  // Uses the same grouped multi-select filter as the three charts
+  // above (groupedOptions, defined earlier in this same script) -
+  // pick individual products and/or whole beers together, exactly
+  // like those, for consistency across every chart/table in this
+  // subsection.
+  var stockTableFilter = createSearchableFilter({{
+    prefix: 'inventory-product-table', allValues: groupedOptions.labels, defaultValues: groupedOptions.labels.slice(),
+    presetsKey: 'abco_dashboard_shared_presets_inventory_product_v1',
+    onApply: function() {{ applyStockTable(); }}
   }});
-  stockTableSearchInput.addEventListener('input', function() {{ filterStockTableRows(stockTableSearchInput.value); }});
-  document.addEventListener('click', function(e) {{
-    if (!stockTableDropdown.contains(e.target)) closeStockTableDropdown();
-  }});
-  stockTableDropdown.addEventListener('keydown', function(e) {{
-    if (e.key === 'Escape') {{ closeStockTableDropdown(); stockTableToggle.focus(); }}
-  }});
-
-  stockTableListDiv.addEventListener('click', function(e) {{
-    var row = e.target.closest('.customer-row');
-    if (!row) return;
-    var idx = parseInt(row.getAttribute('data-index'), 10);
-    stockTableSelectedEntry = stockTablePickerEntries[idx];
-    stockTableSummary.textContent = stockTableSelectedEntry.label;
-    closeStockTableDropdown();
+  document.getElementById('btn-reset-inventory-product-table-filters').addEventListener('click', function() {{
+    stockTableFilter.reset();
     applyStockTable();
   }});
 
@@ -609,7 +551,7 @@ def build_products_subsection(products_df):
   var stockTableSortAscending = true;
 
   function applyStockTable() {{
-    var filteredRows = filterProducts(stockTableSelectedEntry.products);
+    var filteredRows = filterProducts(stockTableFilter.getSelected());
 
     var byProduct = {{}};
     var locationsSet = {{}};
@@ -665,7 +607,6 @@ def build_products_subsection(products_df):
     applyStockTable();
   }});
 
-  buildStockTablePickerList();
   applyStockTable();
 }})();
 </script>

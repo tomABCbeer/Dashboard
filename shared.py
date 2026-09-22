@@ -242,6 +242,38 @@ function buildBeerOrProductPickerEntries(allProductNames, includeAllOption) {
   return entries;
 }
 
+// For a MULTI-select filter (createSearchableFilter) that should let
+// someone pick individual products AND/OR whole beer groups together
+// in the same list - unlike buildBeerOrProductPickerEntries's normal
+// use (a single-select picker, exactly one beer or one product at a
+// time), here every entry is just another independently-toggleable
+// option in one flat list, and picking a beer-group entry means "all
+// of that beer's products," not "only this beer." Returns the label
+// list to hand a filter as allValues/defaultValues, plus an expand()
+// function that turns a set of selected labels back into the real
+// underlying product names (expanding any beer-group labels,
+// deduplicating if a product's beer and the product itself were both
+// somehow selected) - callers filter their own data against that
+// expanded list, never against the labels directly.
+function buildGroupedFilterOptions(allProductNames) {
+  var entries = buildBeerOrProductPickerEntries(allProductNames, false);
+  var labelToProducts = {};
+  entries.forEach(function(e) { labelToProducts[e.label] = e.products; });
+  return {
+    labels: entries.map(function(e) { return e.label; }),
+    expand: function(selectedLabels) {
+      var seen = {};
+      var result = [];
+      selectedLabels.forEach(function(label) {
+        (labelToProducts[label] || []).forEach(function(p) {
+          if (!seen[p]) { seen[p] = true; result.push(p); }
+        });
+      });
+      return result;
+    }
+  };
+}
+
 // config.PRODUCT_COLORS is keyed by BEER name (e.g. "Spy-P-A"), but a
 // single beer is usually sold as several different Breww PRODUCTS (a
 // keg, a can, a growler). Two ways a product resolves to a configured

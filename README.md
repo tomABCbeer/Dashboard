@@ -141,7 +141,11 @@ instant and doesn't need Python or an internet connection.
 
 **Orders** (`/orders/`, the `Invoice` object) — all three charts are
 **interactive**, each with its own independent filters, see below
-- Order count and total value, all-time — not affected by any filter
+- Orders and total order value, **year to date** (not all-time — this
+  resets each January), plus amount still due, which stays **all-time**
+  since it's a running balance rather than something that resets
+  yearly. Not affected by any chart's filters. Shown above the "Sales
+  by Month" heading, ahead of that chart's own filters
 - **Sales by Month**, current year as stacked bars by
   order status (Draft / Confirmed / Invoiced), with every prior year
   in your order history plotted as its own dashed line, in a different
@@ -256,12 +260,12 @@ instead of the shared brand color, specifically so multiple products
 of the *same* beer stay visually distinguishable from each other,
 which the shared brand color would defeat.
 
-**Production batches** (`/drink-batches/`, the `DrinkBatch` object)
-- Batch count, total volume brewed, average ABV — all-time
-- Batch volume by day, last 90 days
-- Batches by status (Planned / In-progress / Complete)
-- Most-brewed beers, top 10 (all-time)
-- Recent batches table
+**Production** (`/drink-batches/`, the `DrinkBatch` object) — just the
+**Recent Batches table**, every batch all-time, **sortable by every
+column** (click any header to sort, click again to reverse). This tab
+used to also have a KPI row and three charts (batch volume trend,
+batches-by-status pie, most-brewed-beers) — removed, keeping only the
+table.
 
 **Inventory** is split into two independent sub-sections, since Breww
 tracks these as genuinely different things — every chart in both is
@@ -278,26 +282,38 @@ beer. Only product types that are physical and sellable are included
 item"-type products (covered separately below) and "Service"-type
 products (not physical stock) are excluded, as are any products with
 zero current stock.
-- **Current Inventory of Products by Location** — a stacked bar chart,
-  one bar per location, broken down by product (top 7 by quantity,
-  everything else grouped into "Other"). Shown first, at the top of
-  this sub-section.
+- **Current Inventory of Products by Location** — a grouped (not
+  stacked) bar chart: one separate bar per product, per location, side
+  by side rather than stacked into one bar per location. Top 7
+  products by quantity get their own bars, everything else groups into
+  a single "Other" bar. Shown first, at the top of this sub-section.
 - Product/location line count, total product stock value — not
-  affected by any of the three product filters
+  affected by any of the four product filters
 - On-hand quantity by product, top 10 — scoped by its own filter
 - Product stock quantity by location (pie) — scoped by its own filter
 - **Product stock by location table** — one row per product, one
   column per location holding that location's current quantity, plus
   a Total column summing across locations. **Sortable** — click any
   column header, including a location column or Total, to sort by it;
-  click again to reverse. Has its own filter, independent of the three
-  charts above: a searchable **beer-or-product picker**, the same
-  pattern the Forecast tab uses (see that section) — pick a beer to
-  see every one of its products together, or narrow to one specific
-  product. Unlike Forecast's picker, this one defaults to a synthetic
-  **"All Products"** entry (shown first, selected by default), since
-  this table's natural starting point is showing everything rather
-  than requiring an explicit choice.
+  click again to reverse.
+
+Every filter in this sub-section — all three charts and the table —
+uses the same **grouped multi-select**: pick any combination of
+individual products and whole beers (every one of that beer's
+package formats together) in one list, exactly like the searchable,
+savable filters elsewhere on this dashboard (see "Filtering the three
+Orders charts" above), just with beer-group entries mixed in
+alongside individual products rather than only individual products.
+Selecting a beer-group entry is shorthand for "select every product
+under this beer" — it doesn't collapse those products into one
+combined line anywhere; the Current Inventory chart above still gives
+each one its own separate bar even when you selected it as part of a
+beer group, not typed in individually. Grouping comes from Breww's own
+`component_drinks` relationship (see "Product colors" above for the
+full explanation of how that resolves) — this is the same grouping
+logic as the Forecast tab's picker (`buildBeerOrProductPickerEntries`
+in `shared.py`), reused here as `buildGroupedFilterOptions`, which
+adapts it for a multi-select rather than a single-select picker.
 
 Note on products: the per-location stock breakdown
 (`quantity_in_stock_in_format_by_site`) is a "conditionally included"
@@ -622,13 +638,14 @@ cover everything that integration would otherwise mis-handle.
 
 Pick a **date range** (defaults to the most recent 7 days of cached
 data), one or more **locations**, and one or more **categories** —
-both checkbox multi-selects, both defaulting to everything selected.
-Square accounts here tend to have one location per pop-up event or
-farmers market in addition to the main taproom, and an
-inactive/retired location still shows up in the list with a visible
-status tag rather than disappearing, in case you need to reconcile
-something from before it went inactive. The resulting **Sales by
-Item** table aggregates every line item sold in that
+both checkbox multi-selects, both defaulting to everything selected,
+each with **Select all** / **Select none** buttons at the top of the
+dropdown, above the search box. Square accounts here tend to have one
+location per pop-up event or farmers market in addition to the main
+taproom, and an inactive/retired location still shows up in the list
+with a visible status tag rather than disappearing, in case you need
+to reconcile something from before it went inactive. The resulting
+**Sales by Item** table aggregates every line item sold in that
 range/location(s)/categor(ies) by item name, variation, *and*
 category (e.g. "IPA" poured as a Pint vs. a Growler are tracked
 separately, since they're a different quantity of beer) — quantity
@@ -637,6 +654,12 @@ bottom. Only orders in `config.SQUARE_ORDER_STATES` (default:
 `COMPLETED` only) are counted, matching how the rest of this
 dashboard already excludes cancelled Breww orders from being treated
 as real sales.
+
+Below that table, a **Total Sales by Day** bar chart shows revenue per
+*day* (not rolled up into months) over that same date range and those
+same location/category filters — computed from the same filtered data
+already behind the table, not a separate query, so the two always
+agree with each other.
 
 **Category** doesn't come from the order data at all — resolving it
 means walking a three-hop chain through Square's separate Catalog
@@ -813,9 +836,6 @@ customer type, order status, and product options on all three are
 populated from whatever's actually in your cached order data, so
 they'll always reflect the real values in your Breww account.
 
-Production batches stay static (not filtered) for now — say the word
-if you'd like that interactive too, matching Orders and Inventory.
-
 ## How data flows
 
 1. **First run**, `fetch_data.py` pulls each endpoint's **full
@@ -866,13 +886,12 @@ if you'd like that interactive too, matching Orders and Inventory.
 3. Nested objects in the response (e.g. `customer.name`, `drink.name`,
    `total_volume.litre`, `stock_item.name`) get flattened into dotted
    CSV columns.
-4. `build_dashboard.py` reads those CSVs and renders the page.
-   Production batches render their charts/tables directly in Python,
-   same as before. Orders, Inventory, and the histogram-style charts
-   instead get their raw records embedded as JSON in the page, plus a
-   block of JavaScript that does the actual filtering, aggregation,
-   and chart-drawing in the browser — see "Filtering the three Orders
-   charts" above.
+4. `build_dashboard.py` reads those CSVs and renders the page. Every
+   tab now gets its raw records embedded as JSON in the page, plus a
+   block of JavaScript that does the actual filtering, sorting,
+   aggregation, and chart-drawing in the browser — see "Filtering the
+   three Orders charts" above. Production's Recent Batches table is
+   simple enough that this is *just* sorting, with no filters at all.
    `config.DEFAULT_CUSTOMER_TYPES` now just sets the *default*
    pre-checked customer types when the page first loads (or after
    Reset), the same across all three Orders charts; it's no longer a

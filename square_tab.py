@@ -193,14 +193,14 @@ def build_square_section(orders_df, locations_df, catalog_df=None):
         <span class="filter-dropdown-caret">&#9662;</span>
       </button>
       <div class="customer-dropdown-panel" id="square-location-panel" hidden>
-        <input type="text" id="square-location-search" class="customer-search-input"
-               placeholder="Search locations&hellip;" autocomplete="off">
-        <div id="square-location-list"></div>
-        <p id="square-location-empty" class="product-search-empty" hidden>No locations match your search.</p>
         <div class="filter-actions" style="padding:8px;">
           <button type="button" id="square-location-select-all">Select all</button>
           <button type="button" id="square-location-select-none">Select none</button>
         </div>
+        <input type="text" id="square-location-search" class="customer-search-input"
+               placeholder="Search locations&hellip;" autocomplete="off">
+        <div id="square-location-list"></div>
+        <p id="square-location-empty" class="product-search-empty" hidden>No locations match your search.</p>
       </div>
     </div>
   </div>
@@ -212,14 +212,14 @@ def build_square_section(orders_df, locations_df, catalog_df=None):
         <span class="filter-dropdown-caret">&#9662;</span>
       </button>
       <div class="customer-dropdown-panel" id="square-category-panel" hidden>
-        <input type="text" id="square-category-search" class="customer-search-input"
-               placeholder="Search categories&hellip;" autocomplete="off">
-        <div id="square-category-list"></div>
-        <p id="square-category-empty" class="product-search-empty" hidden>No categories match your search.</p>
         <div class="filter-actions" style="padding:8px;">
           <button type="button" id="square-category-select-all">Select all</button>
           <button type="button" id="square-category-select-none">Select none</button>
         </div>
+        <input type="text" id="square-category-search" class="customer-search-input"
+               placeholder="Search categories&hellip;" autocomplete="off">
+        <div id="square-category-list"></div>
+        <p id="square-category-empty" class="product-search-empty" hidden>No categories match your search.</p>
       </div>
     </div>
   </div>
@@ -232,6 +232,10 @@ def build_square_section(orders_df, locations_df, catalog_df=None):
 <div class="table-wrap">
   <table class="data-table" id="square-sales-table"></table>
 </div>
+
+<h4>Total Sales by Day</h4>
+<p class="section-note">Revenue per day over the same date range and filters as the table above - each bar is one calendar day, not rolled up into months.</p>
+<div id="square-daily-chart" class="chart-div"></div>
 
 <script id="square-line-item-data" type="application/json">{line_items_json}</script>
 <script id="square-locations-data" type="application/json">{locations_json}</script>
@@ -488,6 +492,20 @@ def build_square_section(orders_df, locations_df, catalog_df=None):
     document.getElementById('square-sales-table').innerHTML =
       buildSortableHeaderRow(SALES_COLUMNS, salesSortColumn, salesSortAscending) +
       '<tbody>' + bodyRows + '</tbody><tfoot>' + totalRow + '</tfoot>';
+
+    var revenueByDay = {{}};
+    filtered.forEach(function(r) {{
+      if (!r.date) return;
+      revenueByDay[r.date] = (revenueByDay[r.date] || 0) + r.revenue;
+    }});
+    var days = Object.keys(revenueByDay).sort();
+    Plotly.react('square-daily-chart', [{{
+      x: days, y: days.map(function(d) {{ return revenueByDay[d]; }}),
+      type: 'bar', marker: {{color: '#4CAF6B'}}
+    }}], {{
+      template: 'plotly_white', title: 'Total Sales by Day', height: 420,
+      xaxis: {{title: ''}}, yaxis: {{title: 'Revenue ($)'}}
+    }}, {{displayModeBar: false, responsive: true}});
   }}
 
   document.getElementById('square-sales-table').addEventListener('click', function(e) {{

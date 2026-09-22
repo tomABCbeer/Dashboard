@@ -1,80 +1,109 @@
-"""Production batches tab."""
+"""Production tab: just the Recent Batches table, sortable by every
+column. (This tab used to also have a batch volume trend chart, a
+batches-by-status pie, and a most-brewed-beers chart - removed at the
+user's request, keeping only the table.)"""
+import json
+
 import pandas as pd
-import plotly.express as px
 
 import config
-from shared import PLOTLY_TEMPLATE, kpi_row, fig_to_html, table_html
+from shared import json_safe
+
 
 def build_batches_section(df):
     if df is None:
-        return "<h2>Production batches</h2><p class='missing'>No cached data yet - run fetch_data.py first.</p>"
+        return "<h2>Production</h2><p class='missing'>No cached data yet - run fetch_data.py first.</p>"
 
-    parts = ["<h2>Production batches</h2>"]
     d = df.copy()
     if "datetime_started" in d.columns:
         d["datetime_started"] = pd.to_datetime(d["datetime_started"], errors="coerce", utc=True)
+        d["datetime_started"] = d["datetime_started"].dt.strftime("%Y-%m-%d")
     vol_col = "total_volume.litre" if "total_volume.litre" in d.columns else None
     if vol_col:
         d[vol_col] = pd.to_numeric(d[vol_col], errors="coerce")
     if "status" in d.columns:
-        d["status_label"] = d["status"].map(config.BATCH_STATUS_LABELS).fillna("Unknown")
+        d["status_label"] = pd.to_numeric(d["status"], errors="coerce").map(config.BATCH_STATUS_LABELS).fillna("Unknown")
     if "brew_type" in d.columns:
-        d["brew_type_label"] = d["brew_type"].map(config.BREW_TYPE_LABELS).fillna("Unknown")
-
-    kpis = [(f"{len(d):,}", "Batches (all-time)")]
-    if vol_col:
-        kpis.append((f"{d[vol_col].sum():,.0f} L", "Total volume brewed (all-time)"))
+        d["brew_type_label"] = pd.to_numeric(d["brew_type"], errors="coerce").map(config.BREW_TYPE_LABELS).fillna("Unknown")
     if "abv" in d.columns:
-        avg_abv = pd.to_numeric(d["abv"], errors="coerce").mean()
-        if pd.notna(avg_abv):
-            kpis.append((f"{avg_abv:.1f}%", "Average ABV"))
-    parts.append(kpi_row(kpis))
+        d["abv"] = pd.to_numeric(d["abv"], errors="coerce")
 
-    if "datetime_started" in d.columns and vol_col:
-        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=config.TREND_DAYS)
-        trend = d.dropna(subset=["datetime_started"])
-        trend = trend[trend["datetime_started"] >= cutoff]
-        if not trend.empty:
-            parts.append("<h3>Batch Volume</h3>")
-            parts.append(f"<p class='section-note'>Total litres brewed per batch, over the last {config.TREND_DAYS} days.</p>")
-            fig = px.bar(trend.sort_values("datetime_started"), x="datetime_started", y=vol_col,
-                         template=PLOTLY_TEMPLATE, title=f"Batch volume, last {config.TREND_DAYS} days",
-                         hover_data=["drink.name"] if "drink.name" in trend.columns else None)
-            fig.update_layout(yaxis_title="Volume (litres)", xaxis_title="")
-            parts.append(fig_to_html(fig))
+    records = []
+    for _, row in d.iterrows():
+        records.append({
+            "batch_code": json_safe(row.get("batch_code")),
+            "drink_name": json_safe(row.get("drink.name")),
+            "status_label": json_safe(row.get("status_label")),
+            "datetime_started": json_safe(row.get("datetime_started")),
+            "volume": json_safe(row.get(vol_col)) if vol_col else None,
+            "abv": json_safe(row.get("abv")),
+            "brew_type_label": json_safe(row.get("brew_type_label")),
+        })
+    records_json = json.dumps(records, allow_nan=False)
 
-    if "status_label" in d.columns:
-        parts.append("<h3>Batches by Status</h3>")
-        parts.append("<p class='section-note'>How your all-time batch count breaks down across Planned, In-progress, and Complete.</p>")
-        counts = d["status_label"].value_counts().reset_index()
-        counts.columns = ["status", "count"]
-        fig = px.pie(counts, names="status", values="count", template=PLOTLY_TEMPLATE,
-                     title="Batches by status")
-        parts.append(fig_to_html(fig))
+    return f"""
+<h2>Production</h2>
 
-    if "drink.name" in d.columns:
-        parts.append("<h3>Most-Brewed Beers</h3>")
-        parts.append("<p class='section-note'>Your top 10 beers by all-time batch count.</p>")
-        counts = d["drink.name"].value_counts().head(10).reset_index()
-        counts.columns = ["beer", "count"]
-        fig = px.bar(counts, x="count", y="beer", orientation="h", template=PLOTLY_TEMPLATE,
-                     title="Most-brewed beers (top 10 by batch count)")
-        fig.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="Batches", yaxis_title="")
-        parts.append(fig_to_html(fig))
+<h3>Recent Batches</h3>
+<p class="section-note">Every batch, all-time. Click any column header to sort.</p>
+<div class="table-wrap">
+  <table class="data-table" id="batches-table"></table>
+</div>
 
-    parts.append("<h3>Recent Batches</h3>")
-    parts.append("<p class='section-note'>Your most recent batches, all-time.</p>")
-    display_cols = [c for c in ["batch_code", "drink.name", "status_label", "datetime_started",
-                                 vol_col, "abv", "brew_type_label"] if c and c in d.columns]
-    parts.append(table_html(
-        d.sort_values("datetime_started", ascending=False) if "datetime_started" in d.columns else d,
-        cols=display_cols or None))
-    return "\n".join(parts)
+<script id="batches-data" type="application/json">{records_json}</script>
+<script>
+(function() {{
+  var batches = JSON.parse(document.getElementById('batches-data').textContent);
 
+  var BATCH_COLUMNS = [
+    {{key: 'batch_code', label: 'Batch Code', type: 'string'}},
+    {{key: 'drink_name', label: 'Beer', type: 'string'}},
+    {{key: 'status_label', label: 'Status', type: 'string'}},
+    {{key: 'datetime_started', label: 'Started', type: 'string'}},
+    {{key: 'volume', label: 'Volume (L)', type: 'number'}},
+    {{key: 'abv', label: 'ABV (%)', type: 'number'}},
+    {{key: 'brew_type_label', label: 'Brew Type', type: 'string'}}
+  ];
+  var sortColumn = 'datetime_started';
+  var sortAscending = false;
 
-# ---------------------------------------------------------------------
-# Stock received (StockReceived schema: stock_item.name, current_quantity,
-# price_per_quantity, location.name, batch_code, expiry_date)
-# This endpoint has no received-date field, so it's shown as a current
-# on-hand snapshot rather than a trend.
-# ---------------------------------------------------------------------
+  function fmtNum(n) {{ return n === null || n === undefined ? '\\u2014' : Number(n).toLocaleString(undefined, {{maximumFractionDigits: 1}}); }}
+
+  function renderBatchesTable() {{
+    var colDef = BATCH_COLUMNS.find(function(c) {{ return c.key === sortColumn; }}) || BATCH_COLUMNS[3];
+    var sorted = sortGenericRows(batches, sortColumn, sortAscending, colDef.type);
+
+    var bodyRows = sorted.map(function(r) {{
+      return '<tr>' +
+        '<td>' + escapeHtml(r.batch_code || '\\u2014') + '</td>' +
+        '<td>' + escapeHtml(r.drink_name || '\\u2014') + '</td>' +
+        '<td>' + escapeHtml(r.status_label || '\\u2014') + '</td>' +
+        '<td>' + escapeHtml(r.datetime_started || '\\u2014') + '</td>' +
+        '<td>' + fmtNum(r.volume) + '</td>' +
+        '<td>' + fmtNum(r.abv) + '</td>' +
+        '<td>' + escapeHtml(r.brew_type_label || '\\u2014') + '</td>' +
+        '</tr>';
+    }}).join('');
+
+    document.getElementById('batches-table').innerHTML =
+      buildSortableHeaderRow(BATCH_COLUMNS, sortColumn, sortAscending) + '<tbody>' + bodyRows + '</tbody>';
+  }}
+
+  document.getElementById('batches-table').addEventListener('click', function(e) {{
+    var btn = e.target.closest('[data-sort-key]');
+    if (!btn) return;
+    var key = btn.getAttribute('data-sort-key');
+    if (sortColumn === key) {{
+      sortAscending = !sortAscending;
+    }} else {{
+      sortColumn = key;
+      var colDef = BATCH_COLUMNS.find(function(c) {{ return c.key === key; }});
+      sortAscending = colDef.type !== 'number';
+    }}
+    renderBatchesTable();
+  }});
+
+  renderBatchesTable();
+}})();
+</script>
+"""
