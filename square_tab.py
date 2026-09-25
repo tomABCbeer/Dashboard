@@ -11,6 +11,7 @@ import json
 
 import pandas as pd
 
+import config
 from shared import json_safe, _safe_float, _parse_json_list
 
 
@@ -150,6 +151,27 @@ def build_square_section(orders_df, locations_df, catalog_df=None):
             "actually had the token available when it ran.</p>"
         )
 
+    # Trims what gets EMBEDDED into this deployed page to a recent
+    # rolling window - the full, all-time history stays completely
+    # untouched in data/square_orders.csv on disk (this only filters
+    # the in-memory copy used for this one build). See
+    # config.SQUARE_EMBED_DAYS for why this exists at all: Square's
+    # order history has no natural cap and grows every day forever,
+    # unlike Breww's data, and embedding all of it eventually produces
+    # a page too large to even deploy.
+    created_at = pd.to_datetime(orders_df.get("created_at"), errors="coerce", utc=True)
+    embed_cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=config.SQUARE_EMBED_DAYS)
+    embed_cutoff_iso = embed_cutoff.strftime("%Y-%m-%d")
+    embed_cutoff_display = embed_cutoff.strftime("%B %-d, %Y")
+    orders_df = orders_df[created_at >= embed_cutoff]
+    if orders_df.empty:
+        return (
+            "<h2>Square</h2>"
+            f"<p class='missing'>No Square orders in the last {config.SQUARE_EMBED_DAYS} days "
+            "(config.SQUARE_EMBED_DAYS) - the full history is still cached in "
+            "data/square_orders.csv, just not shown here.</p>"
+        )
+
     catalog_category_map = build_catalog_category_map(catalog_df)
     line_items = prepare_square_line_item_records(orders_df, locations_df, catalog_category_map)
     if not line_items:
@@ -174,16 +196,17 @@ def build_square_section(orders_df, locations_df, catalog_df=None):
 
     return f"""
 <h2>Square</h2>
-<p class="section-note">What sold at Square over a chosen date range and location(s) - not a replacement for Breww's own Square integration, just a simpler report to read from when manually keying in one consolidated Breww transaction (e.g. "sold to Internal Event") for sales that integration would otherwise mis-handle or split across hundreds of individual orders. Only COMPLETED orders are counted here.</p>
+<p class="section-note">What sold at Square over a chosen date range and location(s) - not a replacement for Breww's own Square integration, just a simpler report to read from when manually keying in one consolidated Breww transaction (e.g. "sold to Internal Event") for sales that integration would otherwise mis-handle or split across hundreds of individual orders. Only COMPLETED orders are counted here. <strong>This tab only shows the last {config.SQUARE_EMBED_DAYS} days</strong> of Square history (currently back to {embed_cutoff_display}) - older orders are still safely cached, just not shown here, to keep this dashboard from growing too large to load.</p>
 
 <div class="customer-report-controls" id="square-controls">
   <div class="filter-group">
     <label>Date range</label>
     <div style="display:flex; gap:8px; align-items:center;">
-      <input type="date" id="square-date-begin">
+      <input type="date" id="square-date-begin" min="{embed_cutoff_iso}">
       <span>to</span>
       <input type="date" id="square-date-end">
     </div>
+    <p class="section-note" style="margin-top:4px;">Data only goes back to {embed_cutoff_display} - a range starting earlier than that will show incomplete results, not an error.</p>
   </div>
   <div class="filter-group">
     <label>Locations</label>
