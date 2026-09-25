@@ -636,6 +636,28 @@ directly when manually keying in one consolidated Breww transaction
 (e.g. "sold to Internal Event: 47 IPA pints, 32 Stout pints...") to
 cover everything that integration would otherwise mis-handle.
 
+**Two separate windows, easy to confuse with each other:** what gets
+*fetched and cached* (`data/square_orders.csv`) is all-time, on
+purpose — see "How data flows" below — but what gets *embedded into
+the deployed page* is capped to the last `config.SQUARE_EMBED_DAYS`
+(default 90) by `build_square_section` in `square_tab.py`, and that's
+a completely different, later step. This split exists because the
+whole dashboard is one self-contained HTML file with its data embedded
+directly in the page, and unlike Breww's data (a stable, bounded
+size), Square's order history has no natural cap and grows every day
+forever — embedding all of it eventually produces a page too large to
+even deploy. That's not hypothetical: it's exactly what happened once
+this dashboard had accumulated 51,000+ cached Square orders, producing
+a 264MB file that failed to upload to Vercel. The fix trims what gets
+*embedded* without touching what gets *fetched* — the full history
+keeps accumulating untouched on disk regardless of this setting, in
+case a future feature needs more of it than the live page shows. If
+the page ever shows "No Square orders in the last 90 days" despite the
+cache clearly having recent data, that's a sign this window and the
+actual data have gotten out of sync somehow — worth checking
+`data/square_orders.csv` directly rather than assuming the fetch
+failed.
+
 Pick a **date range** (defaults to the most recent 7 days of cached
 data), one or more **locations**, and one or more **categories** —
 both checkbox multi-selects, both defaulting to everything selected,

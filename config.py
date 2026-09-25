@@ -64,6 +64,22 @@ SQUARE_INCREMENTAL_BUFFER_DAYS = 7
 # CANCELED ones were reversed.
 SQUARE_ORDER_STATES = ["COMPLETED"]
 
+# How far back the Square tab's DEPLOYED PAGE actually shows/embeds -
+# a completely separate concept from the fetch/cache above, which
+# stays all-time on purpose. The whole dashboard is one self-contained
+# HTML file with its data embedded directly in the page, and unlike
+# Breww's data (a stable, bounded size), Square's order history has no
+# natural cap and grows every day forever - embedding all of it
+# eventually produces a page too large to even deploy (this is exactly
+# what happened: 51,000+ cached orders produced a 264MB file that
+# failed to upload). This trims what gets embedded into the page at
+# BUILD time only - the full history keeps accumulating untouched in
+# data/square_orders.csv regardless of this setting, in case a future
+# feature needs it. The Square tab's own date-range picker already
+# defaults to the last 7 days anyway, so there's no real need for
+# years of history to be sitting in every page load.
+SQUARE_EMBED_DAYS = 90
+
 # --- Which data to pull -------------------------------------------------
 # Endpoint paths are taken directly from Breww's published OpenAPI spec
 # (orders_list, drink_batches_list, stock_received_list operations).
