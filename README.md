@@ -475,7 +475,27 @@ work, only if you want it to share an existing beer's *color* too.
 
 Each product's projection is computed **fully independently** — kegs
 and cans never get summed together, since they're not really
-comparable quantities. Each month combines:
+comparable quantities. The chart covers the next **3 months**, shown
+as **weekly bars** (Monday-start weeks) rather than a monthly line —
+grouped side by side when more than one product is selected, so you
+can compare where each format is headed week by week, not just month
+by month.
+
+**Known unfulfilled orders and planned production use their own real
+dates**, bucketed into whichever week they actually fall in — a
+fulfillment scheduled for a specific Tuesday shows up in that exact
+week, not spread across its month. **Projected demand is different**:
+it's computed at *monthly* granularity (see below for why), then
+divided evenly across however many weeks fall within that month, so
+each week gets a level share of that month's estimate rather than a
+guess at which specific week within the month it'll land in. A week
+that straddles two calendar months (they don't divide evenly by 7)
+is assigned to whichever month has 4 or more of its 7 days — the
+occasional boundary week that leans just past the stated 3-month mark
+still gets a real, consistent estimate this way, rather than an
+arbitrary zero.
+
+Each month's demand combines:
 
 - **Planned production** — from `/planned-packagings/`, which tracks
   production at the *packaged product* level (a specific keg/can/cask
@@ -512,9 +532,9 @@ comparable quantities. Each month combines:
   ones where `dispatched` is false, using each one's `date_scheduled`.
   A fulfillment with no scheduled date, or one that's overdue (dated
   before the forecast window even starts), is treated as due as soon
-  as possible rather than dropped from the forecast. One scheduled
-  further out than the 4-month window is excluded, since it's not
-  relevant to this chart.
+  as possible rather than dropped from the forecast — it lands in the
+  very first week of the horizon. One scheduled further out than the
+  3-month window is excluded, since it's not relevant to this chart.
 - **Projected new demand** — demand not yet reflected in an actual
   order. This takes last year's actual quantity sold in the *same*
   calendar month (the seasonal baseline — this is what keeps a
@@ -526,6 +546,16 @@ comparable quantities. Each month combines:
   whole projection) and not year-to-date (too slow to reflect a real
   recent shift) — a short trailing window weights recent performance
   heavily without overreacting to it.
+
+  This stays at monthly granularity on purpose, even though the chart
+  itself is weekly — a single week's sales a year ago is a much
+  noisier number than a month's, and specific calendar weeks don't
+  line up cleanly year over year the way months do (leap years,
+  holidays landing in different weeks). Known orders and planned
+  production above use real dates because we actually *know* them;
+  demand is an estimate, and spreading a reliable monthly figure
+  evenly across its weeks is more honest than pretending to know
+  which specific week within the month it'll materialize in.
 
   The window is **up to 3 months**, but shrinks to 2 or 1 for a
   product that hasn't been around long enough for the wider window to
@@ -569,13 +599,13 @@ This is a heuristic planning aid, not a guaranteed prediction. A
 projected ending stock, and the growth factor actually used (or "N/A"
 if there's no valid year-ago data to compute one at all). A combined,
 **sortable** breakdown table underneath (click any column header to
-resort) shows exactly how each product's each month was built —
+resort) shows exactly how each product's each *week* was built —
 production, known orders, projected demand, running total — with an
 inline note on any row where the growth factor was skipped, marked
-low-confidence, or missing a seasonal baseline for that specific
-month, so you can sanity-check the pieces rather than trust an opaque
-line. Nothing is clamped to zero — a row dipping below zero is a
-genuine projected stockout worth planning around.
+low-confidence, or missing a seasonal baseline for that week's month,
+so you can sanity-check the pieces rather than trust an opaque bar.
+Nothing is clamped to zero — a row dipping below zero is a genuine
+projected stockout worth planning around.
 
 **Growth & Efficiency** (a new tab, built entirely from data already
 embedded by the Orders tab)

@@ -1,8 +1,8 @@
 """Forecast tab: projected inventory for a chosen beer (every one of
 its products/package-formats together) or a single standalone
-product, over the next 4 months - combining current stock, planned
-production, existing unfulfilled orders, and a seasonal demand
-projection weighted toward recent sales."""
+product, over the next 3 months shown as weekly bars - combining
+current stock, planned production, existing unfulfilled orders, and a
+seasonal demand projection weighted toward recent sales."""
 import json
 
 import pandas as pd
@@ -137,7 +137,7 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
 
     return f"""
 <h2>Forecast</h2>
-<p class="section-note">Predicts inventory over the next 4 months, combining current stock, planned production, orders already on the books, and a demand projection that leans on recent sales, adjusted for typical seasonal pattern. This is a heuristic estimate based on the assumptions below, not a guarantee - treat it as a planning aid.</p>
+<p class="section-note">Predicts inventory over the next 3 months, shown as weekly bars, combining current stock, planned production, orders already on the books, and a demand projection that leans on recent sales, adjusted for typical seasonal pattern. Known orders and planned production use their own real dates; the demand projection is computed reliably per month (see the breakdown table) and spread evenly across that month's weeks, since a single week's sales a year ago is too noisy a number to estimate from directly. This is a heuristic estimate based on the assumptions below, not a guarantee - treat it as a planning aid.</p>
 
 <div class="customer-report-controls" id="forecast-controls">
   <div class="filter-group">
@@ -272,13 +272,7 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
   }});
 
   // --- Forecast math ----------------------------------------------------------
-  var MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   function monthKey(dateStr) {{ return dateStr ? dateStr.slice(0, 7) : null; }}
-  function monthLabel(key) {{
-    var parts = key.split('-');
-    var y = parts[0], m = parseInt(parts[1], 10);
-    return MONTH_ABBR[m - 1] + ' ' + y;
-  }}
   function fmtNum(n) {{ return Math.round(n).toLocaleString(); }}
 
   // A trailing-3-month window: the 3 most recently COMPLETED calendar
@@ -302,55 +296,130 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
       .filter(function(r) {{ return r.product_name === productName; }})
       .reduce(function(s, r) {{ return s + (r.quantity || 0); }}, 0);
 
+    // The forecast covers the next 3 calendar months (unchanged concept,
+    // shorter than the old 4), used ONLY to compute reliable monthly
+    // demand totals - the chart itself is weekly, built separately below.
     var months = [];
     var y = today.getUTCFullYear(), m = today.getUTCMonth() + 1;
-    for (var i = 0; i < 4; i++) {{
+    for (var i = 0; i < 3; i++) {{
       m++;
       if (m > 12) {{ m = 1; y++; }}
       months.push(y + '-' + (m < 10 ? '0' + m : String(m)));
     }}
 
-    // Known, already-booked orders not yet dispatched.
+    // --- Build the weekly horizon (Monday-start weeks) ------------------
+    // Starts at the Monday on/before the 1st of the first forecast
+    // month (so the first forecast month is fully covered by whole
+    // weeks, even if that means a few days of the CURRENT month bleed
+    // into the first week), and runs through the last day of the last
+    // forecast month. A week that straddles two calendar months is
+    // assigned to whichever month has 4 or more of its 7 days -
+    // ties are impossible since 7 is odd.
+    function addDays(date, n) {{
+      var d = new Date(date.getTime());
+      d.setUTCDate(d.getUTCDate() + n);
+      return d;
+    }}
+    function mondayOf(date) {{
+      var day = date.getUTCDay();
+      var diff = (day === 0) ? -6 : (1 - day);
+      return addDays(date, diff);
+    }}
+    function dateKey(date) {{ return date.toISOString().slice(0, 10); }}
+    function monthOfDate(date) {{
+      var mm = date.getUTCMonth() + 1;
+      return date.getUTCFullYear() + '-' + (mm < 10 ? '0' + mm : String(mm));
+    }}
+
+    var firstMonthParts = months[0].split('-');
+    var horizonStart = mondayOf(new Date(Date.UTC(parseInt(firstMonthParts[0], 10), parseInt(firstMonthParts[1], 10) - 1, 1)));
+    var lastMonthParts = months[months.length - 1].split('-');
+    var horizonEnd = new Date(Date.UTC(parseInt(lastMonthParts[0], 10), parseInt(lastMonthParts[1], 10), 0));
+
+    var weeks = [];
+    var cursor = horizonStart;
+    while (cursor <= horizonEnd) {{
+      var startMonth = monthOfDate(cursor);
+      var endMonth = monthOfDate(addDays(cursor, 6));
+      var majorityMonth;
+      if (startMonth === endMonth) {{
+        majorityMonth = startMonth;
+      }} else {{
+        var daysInStartMonth = 0;
+        for (var di = 0; di < 7; di++) {{
+          if (monthOfDate(addDays(cursor, di)) === startMonth) daysInStartMonth++;
+        }}
+        majorityMonth = daysInStartMonth >= 4 ? startMonth : endMonth;
+      }}
+      weeks.push({{weekStart: dateKey(cursor), majorityMonth: majorityMonth}});
+      cursor = addDays(cursor, 7);
+    }}
+
+    // A boundary week can occasionally lean into a month just past the
+    // stated 3-month horizon (weeks don't divide evenly into months) -
+    // touchedMonths covers whatever months actually got touched, so
+    // that week still gets a real, consistent demand estimate instead
+    // of an arbitrary zero.
+    var touchedMonths = [];
+    weeks.forEach(function(w) {{
+      if (touchedMonths.indexOf(w.majorityMonth) === -1) touchedMonths.push(w.majorityMonth);
+    }});
+    var weeksPerMonth = {{}};
+    weeks.forEach(function(w) {{ weeksPerMonth[w.majorityMonth] = (weeksPerMonth[w.majorityMonth] || 0) + 1; }});
+
+    function weekKeyForDate(dateStr) {{
+      if (!dateStr) return null;
+      var d = new Date(dateStr + 'T00:00:00Z');
+      if (isNaN(d.getTime())) return null;
+      return dateKey(mondayOf(d));
+    }}
+
+    var weekKeys = weeks.map(function(w) {{ return w.weekStart; }});
+
+    // Known, already-booked orders not yet dispatched - bucketed by
+    // their OWN real scheduled date, not smeared like demand below,
+    // since we know exactly when these are actually due.
     var knownUnfulfilled = {{}};
-    months.forEach(function(mk) {{ knownUnfulfilled[mk] = 0; }});
+    weekKeys.forEach(function(wk) {{ knownUnfulfilled[wk] = 0; }});
     fulfillmentData.forEach(function(r) {{
       if (r.dispatched) return;
       if (r.product_name !== productName) return;
-      var mk = monthKey(r.date_scheduled);
+      var wk = weekKeyForDate(r.date_scheduled);
       var qty = r.quantity || 0;
-      if (mk && knownUnfulfilled.hasOwnProperty(mk)) {{
-        knownUnfulfilled[mk] += qty;
-      }} else if (!mk || mk < months[0]) {{
+      if (wk && knownUnfulfilled.hasOwnProperty(wk)) {{
+        knownUnfulfilled[wk] += qty;
+      }} else if (!wk || wk < weekKeys[0]) {{
         // No scheduled date, or overdue/scheduled before the window
         // starts - treat as due as soon as possible rather than
         // dropping it from the forecast entirely.
-        knownUnfulfilled[months[0]] += qty;
+        knownUnfulfilled[weekKeys[0]] += qty;
       }}
-      // Scheduled beyond the 4-month window: not relevant to this chart.
+      // Scheduled beyond the horizon: not relevant to this chart.
     }});
 
-    // Planned production landing in the window. A plan whose batch is
-    // marked Complete never even reaches here - that's filtered out
-    // in Python (prepare_planned_packaging_records), since a done
-    // batch definitively isn't producing more, regardless of date.
-    // Anything that survives that filter is treated as genuinely
-    // still active, the same way known unfulfilled orders are below -
-    // a plan dated before the forecast window (a batch running
-    // behind schedule, for whatever reason) is treated as due as soon
-    // as possible rather than dropped, since there's no reason to
-    // assume a delayed-but-not-complete batch has been abandoned.
+    // Planned production landing in the window, bucketed the same way -
+    // by its own real planned date. A plan whose batch is marked
+    // Complete never even reaches here - that's filtered out in Python
+    // (prepare_planned_packaging_records), since a done batch
+    // definitively isn't producing more, regardless of date. Anything
+    // that survives that filter is treated as genuinely still active,
+    // the same way known unfulfilled orders are above - a plan dated
+    // before the window (a batch running behind schedule, for whatever
+    // reason) is treated as due as soon as possible rather than
+    // dropped, since there's no reason to assume a delayed-but-not-
+    // complete batch has been abandoned.
     var plannedProduction = {{}};
-    months.forEach(function(mk) {{ plannedProduction[mk] = 0; }});
+    weekKeys.forEach(function(wk) {{ plannedProduction[wk] = 0; }});
     packagingData.forEach(function(r) {{
       if (r.product_name !== productName) return;
-      var mk = monthKey(r.plan_date);
+      var wk = weekKeyForDate(r.plan_date);
       var qty = r.quantity_remaining || 0;
-      if (mk && plannedProduction.hasOwnProperty(mk)) {{
-        plannedProduction[mk] += qty;
-      }} else if (!mk || mk < months[0]) {{
-        plannedProduction[months[0]] += qty;
+      if (wk && plannedProduction.hasOwnProperty(wk)) {{
+        plannedProduction[wk] += qty;
+      }} else if (!wk || wk < weekKeys[0]) {{
+        plannedProduction[weekKeys[0]] += qty;
       }}
-      // Scheduled beyond the 4-month window: not relevant to this chart.
+      // Scheduled beyond the horizon: not relevant to this chart.
     }});
 
     // Growth rate, from actual historical order lines, using a
@@ -358,7 +427,9 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
     // year-to-date - weights recent sales much more heavily, while
     // still comparing against the same months a year ago so a
     // genuinely seasonal product doesn't get penalized just because
-    // "now" happens to be its off-season.
+    // "now" happens to be its off-season. Unchanged from the monthly
+    // version of this forecast - this reliability work doesn't need
+    // redoing just because the CHART is now weekly.
     function sumQuantityInRange(startDate, endDate) {{
       return lineData.filter(function(r) {{
         return r.product_name === productName &&
@@ -436,42 +507,59 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
 
     // Projected NEW demand (not yet on the books): last year's actual
     // for that calendar month (the seasonal baseline), scaled by the
-    // growth rate above. Deliberately NOT reduced by known unfulfilled
-    // orders for that month - those come from a different date field
-    // entirely (fulfillments' scheduled delivery date, vs. the order
-    // issue dates the baseline and growth rate are built from), so an
-    // advance order placed months before its scheduled delivery was
-    // never part of the historical baseline to begin with; subtracting
-    // it here would silently understate demand rather than avoid
-    // double-counting. Known orders and projected demand are added as
-    // independent outflows in the running total below instead.
-    // "One year before" is computed from EACH forecast month's own
-    // year, not from today's year - a forecast month that rolls into
-    // next calendar year (e.g. forecasting from October into next
-    // January) needs its baseline from THIS January, not from two
-    // years back.
-    var projectedDemand = {{}};
+    // growth rate above - computed at MONTHLY granularity, same
+    // reliable math as before, then divided evenly across however many
+    // weeks fall (by majority) within that month, for the weekly
+    // chart. This deliberately does NOT try to estimate demand
+    // week-by-week directly - a single week's sales a year ago is a
+    // much noisier number than a month's, and specific calendar weeks
+    // don't line up cleanly year over year the way months do. Known
+    // orders and planned production above use real dates because we
+    // actually know them; demand is an estimate, and spreading a
+    // reliable monthly estimate evenly is more honest than pretending
+    // to know which specific week within a month it'll land in.
+    // Deliberately NOT reduced by known unfulfilled orders - those
+    // come from a different date field entirely (fulfillments'
+    // scheduled delivery date, vs. the order issue dates the baseline
+    // and growth rate are built from), so an advance order placed
+    // months before its scheduled delivery was never part of the
+    // historical baseline to begin with; subtracting it here would
+    // silently understate demand rather than avoid double-counting.
+    // Known orders and projected demand are added as independent
+    // outflows in the running total below instead. "One year before"
+    // is computed from EACH month's own year, not from today's year -
+    // a month that rolls into next calendar year needs its baseline
+    // from THIS same month last year, not from two years back.
+    var monthlyDemandTotal = {{}};
     var hasSeasonalBaseline = {{}};
-    months.forEach(function(mk) {{
+    touchedMonths.forEach(function(mk) {{
       var parts = mk.split('-');
       var thisMonthYear = parseInt(parts[0], 10);
       var lastYearMonthKey = (thisMonthYear - 1) + '-' + parts[1];
       var lastYearMonthActual = sumQuantityInRange(lastYearMonthKey + '-01', lastYearMonthKey + '-31');
       hasSeasonalBaseline[mk] = lastYearMonthActual > 0;
-      projectedDemand[mk] = lastYearMonthActual * growthFactor;
+      monthlyDemandTotal[mk] = lastYearMonthActual * growthFactor;
+    }});
+
+    var projectedDemand = {{}};
+    weeks.forEach(function(w) {{
+      projectedDemand[w.weekStart] = monthlyDemandTotal[w.majorityMonth] / weeksPerMonth[w.majorityMonth];
     }});
 
     var points = [{{label: 'Now', key: null, inventory: startInventory}}];
     var running = startInventory;
-    months.forEach(function(mk) {{
-      running += plannedProduction[mk];
-      running -= knownUnfulfilled[mk];
-      running -= projectedDemand[mk];
-      points.push({{label: monthLabel(mk), key: mk, inventory: running}});
+    weeks.forEach(function(w) {{
+      var wk = w.weekStart;
+      running += plannedProduction[wk];
+      running -= knownUnfulfilled[wk];
+      running -= projectedDemand[wk];
+      var d = new Date(wk + 'T00:00:00Z');
+      var label = (d.getUTCMonth() + 1) + '/' + d.getUTCDate();
+      points.push({{label: label, key: wk, inventory: running}});
     }});
 
     return {{
-      productName: productName, points: points, months: months, startInventory: startInventory,
+      productName: productName, points: points, weeks: weeks, weekKeys: weekKeys, startInventory: startInventory,
       knownUnfulfilled: knownUnfulfilled, plannedProduction: plannedProduction,
       projectedDemand: projectedDemand, growthFactor: growthFactor,
       hasGrowthHistory: hasGrowthHistory, lowConfidence: lowConfidence,
@@ -483,7 +571,7 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
   // --- Sortable breakdown table -----------------------------------------------
   var BREAKDOWN_COLUMNS = [
     {{key: 'product_name', label: 'Product', type: 'string'}},
-    {{key: 'month_label', label: 'Month', type: 'string'}},
+    {{key: 'week_label', label: 'Week of', type: 'string'}},
     {{key: 'planned_production', label: 'Planned production', type: 'number'}},
     {{key: 'known_orders', label: 'Known orders', type: 'number'}},
     {{key: 'projected_demand', label: 'Projected new demand', type: 'number'}},
@@ -524,20 +612,20 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
         '</tr>';
     }}).join('');
     document.getElementById('forecast-summary-table').innerHTML =
-      '<thead><tr><th>Product</th><th>Current stock</th><th>Projected in 4 months</th><th>Trailing growth used (up to 3mo)</th></tr></thead>' +
+      '<thead><tr><th>Product</th><th>Current stock</th><th>Projected in 3 months</th><th>Trailing growth used (up to 3mo)</th></tr></thead>' +
       '<tbody>' + summaryRows + '</tbody>';
 
-    // --- Chart: one line per product ---
+    // --- Chart: weekly bars, grouped side by side when more than one product ---
     var traces = forecasts.map(function(f, i) {{
       return {{
         x: f.points.map(function(p) {{ return p.label; }}),
         y: f.points.map(function(p) {{ return p.inventory; }}),
-        type: 'scatter', mode: 'lines+markers', name: f.productName,
-        line: {{color: lineColors[i % lineColors.length]}}, marker: {{color: lineColors[i % lineColors.length]}}
+        type: 'bar', name: f.productName,
+        marker: {{color: lineColors[i % lineColors.length]}}
       }};
     }});
     Plotly.react('forecast-chart', traces, {{
-      template: 'plotly_white', title: selectedEntry.label + ' - Projected inventory, next 4 months',
+      barmode: 'group', template: 'plotly_white', title: selectedEntry.label + ' - Projected inventory by week, next 3 months',
       height: 460, margin: {{t: 60, b: 60, l: 70, r: 30}},
       yaxis: {{title: 'Units in stock'}}, xaxis: {{title: ''}},
       legend: {{title: {{text: ''}}}},
@@ -548,22 +636,22 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
     // --- Combined, sortable breakdown table ---
     var allRows = [];
     forecasts.forEach(function(f) {{
-      f.months.forEach(function(mk, i) {{
+      f.weeks.forEach(function(w, i) {{
+        var wk = w.weekStart;
         var note = '';
         if (!f.hasGrowthHistory) {{
           note = ' (no history)';
         }} else if (f.lowConfidence) {{
           note = ' (low confidence)';
-        }} else if (!f.hasSeasonalBaseline[mk]) {{
+        }} else if (!f.hasSeasonalBaseline[w.majorityMonth]) {{
           note = ' (no history for this month)';
         }}
         allRows.push({{
           product_name: f.productName,
-          month_label: monthLabel(mk),
-          month_key: mk,
-          planned_production: f.plannedProduction[mk],
-          known_orders: f.knownUnfulfilled[mk],
-          projected_demand: f.projectedDemand[mk],
+          week_label: wk,
+          planned_production: f.plannedProduction[wk],
+          known_orders: f.knownUnfulfilled[wk],
+          projected_demand: f.projectedDemand[wk],
           projected_demand_note: note,
           ending_inventory: f.points[i + 1].inventory
         }});
@@ -593,7 +681,7 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
     var rows = sorted.map(function(r) {{
       return '<tr>' +
         '<td>' + escapeHtml(r.product_name) + '</td>' +
-        '<td>' + escapeHtml(r.month_label) + '</td>' +
+        '<td>' + escapeHtml(r.week_label) + '</td>' +
         '<td>+' + fmtNum(r.planned_production) + '</td>' +
         '<td>-' + fmtNum(r.known_orders) + '</td>' +
         '<td>-' + fmtNum(r.projected_demand) + escapeHtml(r.projected_demand_note) + '</td>' +
