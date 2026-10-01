@@ -569,9 +569,29 @@ Each month's demand combines:
   for a full year yet), or the product has under a month of history
   at all, the growth factor is skipped entirely and treated as 1×
   (no adjustment) — the summary table shows this as **N/A**, and
-  shows the shrunk window size directly (e.g. "200% (2mo window - new
-  product)") whenever it's used, so a surprising number is easy to
-  trace back to *why*.
+  shows the shrunk window size directly (e.g. "200% (2mo window -
+  limited history)") whenever it's used, so a surprising number is
+  easy to trace back to *why*.
+
+  The same window also shrinks for a **long-standing** product if
+  Breww itself doesn't have a full month of data that far back — e.g.
+  if Breww adoption started partway through a calendar month, that
+  first month is only a partial month of real sales, not a true
+  representative one, and would otherwise *overstate* growth (an
+  artificially low partial month last year, divided into a normal
+  full month this year, inflates the ratio) rather than understate it
+  the way a genuinely new product's pre-launch zeros would. This is a
+  completely separate floor from the product-specific one above — it's
+  computed once from the earliest order date across the *whole*
+  account, not per product, specifically to catch a long-standing
+  product's numbers getting distorted by a known-incomplete cutover
+  month that has nothing to do with when that particular product
+  launched. Whichever of the two floors is more restrictive wins. This
+  same protection also applies to the seasonal baseline itself, not
+  just the growth factor — a forecast month whose year-ago lookback
+  lands in that same unreliable cutover month falls back to "no
+  history for this month" (demand treated as 0, flagged in the
+  breakdown table) rather than using the misleadingly low real number.
 
   Separately: if the *year-ago* comparison window has some sales but
   fewer than 20 units (the same reliability threshold used elsewhere),

@@ -453,6 +453,39 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
       if (!firstSaleMonthKey || mk < firstSaleMonthKey) firstSaleMonthKey = mk;
     }});
 
+    // A SEPARATE, system-wide floor: the first month ANY order exists
+    // across the WHOLE account, not just this product. If Breww
+    // tracking itself started partway through a month (e.g. switched
+    // over mid-July), that first month's total is only a partial
+    // month of real data, not a true representative one - it's
+    // artificially low for a product that was actually being sold the
+    // whole time, before Breww existed to record it. Unlike
+    // firstSaleMonthKey (which correctly identifies a genuinely NEW
+    // product's pre-launch zeros), this specifically protects against
+    // a long-standing product's growth/seasonal numbers getting
+    // distorted by a known-incomplete cutover month. The first FULLY
+    // reliable month is the one after that.
+    var globalFirstMonthKey = null;
+    lineData.forEach(function(r) {{
+      if (r.order_status_label === 'Cancelled' || !r.issue_date) return;
+      var mk = monthKey(r.issue_date);
+      if (!globalFirstMonthKey || mk < globalFirstMonthKey) globalFirstMonthKey = mk;
+    }});
+    var globalReliableStartMonthKey = null;
+    if (globalFirstMonthKey) {{
+      var gfParts = globalFirstMonthKey.split('-');
+      var reliableStart = shiftMonth(parseInt(gfParts[0], 10), parseInt(gfParts[1], 10), 1);
+      globalReliableStartMonthKey = ymKey(reliableStart);
+    }}
+    // Whichever floor is more restrictive wins - a product's own
+    // first sale, or the system-wide "first full month" if that's
+    // later (which it will be, for any product that was already
+    // being sold before Breww adoption began).
+    var effectiveFloorKey = firstSaleMonthKey;
+    if (globalReliableStartMonthKey && (!effectiveFloorKey || globalReliableStartMonthKey > effectiveFloorKey)) {{
+      effectiveFloorKey = globalReliableStartMonthKey;
+    }}
+
     var curY = today.getUTCFullYear(), curM = today.getUTCMonth() + 1;
     var lastCompletedMonth = shiftMonth(curY, curM, -1);
     var lastCompletedMonthKey = ymKey(lastCompletedMonth);
@@ -468,15 +501,17 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
     // no sales ever) - no basis for a growth adjustment, use 1x.
     if (firstSaleMonthKey && firstSaleMonthKey <= lastCompletedMonthKey) {{
       // Try the widest window (3 months) first, shrinking to 2 then 1
-      // if the product hasn't been around long enough for the wider
-      // window's "this year" or "same months last year" side to be
-      // real, sold history rather than pre-launch zeros.
+      // if the data isn't reliably available that far back yet -
+      // either because the product hasn't been around that long
+      // (firstSaleMonthKey), or because Breww itself doesn't have a
+      // full month of data that far back (globalReliableStartMonthKey,
+      // whichever of the two is later/more restrictive).
       for (var tryN = 3; tryN >= 1; tryN--) {{
         var tryStart = shiftMonth(curY, curM, -tryN);
         var tryStartKey = ymKey(tryStart);
         var tryStartLastYear = shiftMonth(tryStart.y, tryStart.m, -12);
         var tryStartLastYearKey = ymKey(tryStartLastYear);
-        if (tryStartKey >= firstSaleMonthKey && tryStartLastYearKey >= firstSaleMonthKey) {{
+        if (tryStartKey >= effectiveFloorKey && tryStartLastYearKey >= effectiveFloorKey) {{
           growthWindowMonths = tryN;
           break;
         }}
@@ -499,10 +534,10 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
         growthFactor = hasGrowthHistory ? (trailingThisYear / trailingLastYear) : 1;
         lowConfidence = hasGrowthHistory && trailingLastYear < 20;
       }}
-      // growthWindowMonths still null here means the product hasn't
-      // been around a full year yet even at a 1-month window - no
-      // valid same-period-last-year comparison exists, so it's left
-      // at the growthFactor=1 / hasGrowthHistory=false defaults set above.
+      // growthWindowMonths still null here means even a 1-month window
+      // doesn't clear the effective floor - no valid, reliable
+      // same-period-last-year comparison exists, so it's left at the
+      // growthFactor=1 / hasGrowthHistory=false defaults set above.
     }}
 
     // Projected NEW demand (not yet on the books): last year's actual
@@ -530,6 +565,11 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
     // is computed from EACH month's own year, not from today's year -
     // a month that rolls into next calendar year needs its baseline
     // from THIS same month last year, not from two years back.
+    //
+    // If that same-month-last-year falls in Breww's own known-partial
+    // first month (or earlier), it's treated the same as "no history"
+    // rather than used as a misleadingly low real number - same
+    // globalReliableStartMonthKey floor as the growth factor above.
     var monthlyDemandTotal = {{}};
     var hasSeasonalBaseline = {{}};
     touchedMonths.forEach(function(mk) {{
@@ -537,8 +577,9 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
       var thisMonthYear = parseInt(parts[0], 10);
       var lastYearMonthKey = (thisMonthYear - 1) + '-' + parts[1];
       var lastYearMonthActual = sumQuantityInRange(lastYearMonthKey + '-01', lastYearMonthKey + '-31');
-      hasSeasonalBaseline[mk] = lastYearMonthActual > 0;
-      monthlyDemandTotal[mk] = lastYearMonthActual * growthFactor;
+      var lastYearMonthReliable = !globalReliableStartMonthKey || lastYearMonthKey >= globalReliableStartMonthKey;
+      hasSeasonalBaseline[mk] = lastYearMonthActual > 0 && lastYearMonthReliable;
+      monthlyDemandTotal[mk] = hasSeasonalBaseline[mk] ? (lastYearMonthActual * growthFactor) : 0;
     }});
 
     var projectedDemand = {{}};
@@ -601,7 +642,7 @@ def build_forecast_section(fulfillments_df, packagings_df, products_df=None, bat
       var endInv = f.points[f.points.length - 1].inventory;
       var growthDisplay = f.hasGrowthHistory ? (f.growthFactor * 100).toFixed(0) + '%' : 'N/A';
       if (f.hasGrowthHistory && f.growthWindowMonths && f.growthWindowMonths < 3) {{
-        growthDisplay += ' (' + f.growthWindowMonths + 'mo window - new product)';
+        growthDisplay += ' (' + f.growthWindowMonths + 'mo window - limited history)';
       }}
       if (f.hasGrowthHistory && f.lowConfidence) growthDisplay += ' (low confidence)';
       return '<tr>' +
