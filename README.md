@@ -55,6 +55,36 @@ If you skip this, the dashboard still works fine — the Square tab
 just shows a "not connected" message until you add a token and
 re-run `fetch_data.py`.
 
+### Facebook and Instagram (optional, for the Social tab)
+
+The Social tab reads your Facebook Page and its linked Instagram
+account through Meta's Graph API. You need a Page token that doesn't
+expire, which takes a one-time setup:
+
+1. In [developers.facebook.com](https://developers.facebook.com/),
+   create a **Business** app and link it to your business portfolio
+   (or use the Graph API Explorer route below if verification is a
+   hurdle — an app in development mode can read its own admin's Pages
+   and Instagram accounts without App Review).
+2. In **Tools → Graph API Explorer**, pick your app, choose *User
+   token*, add the permissions `pages_show_list`, `pages_read_engagement`,
+   `read_insights`, `instagram_basic`, `instagram_manage_insights` and
+   `business_management`, and generate a token. Put it in `.env` as
+   `META_ACCESS_TOKEN=...`, plus your App ID as `META_APP_ID=...`
+   (app dashboard → Settings → Basic).
+3. Run `python meta_make_permanent_token.py`. It asks for your App
+   secret (hidden as you type; sent only to Meta), swaps the short-lived
+   token for a Page token that doesn't expire, checks it can read your
+   Page and Instagram account, and writes it to `meta_page_token.txt`.
+4. Put that value in `.env` as `META_PAGE_TOKEN=...` **and** as a GitHub
+   secret named `META_PAGE_TOKEN`, then delete `meta_page_token.txt`
+   (keep it out of git).
+
+`meta_discovery.py` is a read-only script that lists your Pages, the
+linked Instagram account, and which insight metrics your account
+actually returns — useful if Meta changes metrics later and a chart
+goes blank.
+
 ## Run it
 
 ```
@@ -94,6 +124,10 @@ inventory_tab.py           — Products and Stock Items (both sub-sections)
 customer_report_tab.py     — Customer Report
 forecast_tab.py            — Forecast
 growth_efficiency_tab.py   — Growth & Efficiency
+square_tab.py              — Square
+social_tab.py              — Social (Facebook + Instagram)
+square_client.py           — Square API client (fetch_data.py uses it)
+meta_client.py             — Meta Graph API client (fetch_data.py uses it)
 ```
 
 `shared.py` includes the full client-side searchable-filter component
@@ -1029,6 +1063,62 @@ both be plain integers and never hit this).
 If you ever want to force a clean full re-pull of everything (e.g. you
 suspect the cache drifted), just delete the relevant file in `data/`
 and run `fetch_data.py` again.
+
+## Social tab
+
+Facebook Page and Instagram performance over time, from Meta's Graph API
+(`meta_client.py`, pulled by `fetch_meta_data` in `fetch_data.py`).
+
+**What's on it:** a date range and Facebook/Instagram checkboxes; KPI
+cards (follower counts with change over the range, views, engagements);
+a followers-over-time line chart; a daily Views / Reach bar chart
+(toggle between the two); a stacked daily Engagement chart; and a
+sortable table of Instagram posts published in the range (reach, views,
+likes, comments, shares, saves, interactions; the caption links to the
+post). The posts table is Instagram only — Facebook post-level data
+hasn't been added.
+
+**Cached in `data/`:** `social_fb_daily.csv`, `social_ig_daily.csv`,
+`social_ig_followers.csv` and `social_ig_posts.csv`. Each run re-checks
+the last 7 days (Meta finalizes recent days after the fact) and keeps
+everything older; Instagram posts newer than 45 days have their numbers
+refreshed every run because they keep growing. Settings are in
+`config.py` (`META_*`).
+
+**Things worth knowing:**
+
+- *Facebook metrics changed.* Meta retired the old Page "impressions"
+  and "fans" metrics; this uses `page_media_view` (shown as "views"),
+  `page_total_media_view_unique` (unique viewers), `page_follows`
+  (lifetime followers, giving a real follower history), daily follows
+  and unfollows, `page_views_total` and `page_post_engagements`. If Meta
+  retires more, that one series goes blank rather than breaking the
+  tab; re-run `meta_discovery.py` to see what your account returns now.
+- *Day boundaries.* Facebook's daily values are labelled by when the
+  period *ends* (midnight Pacific, the Page's insights timezone); the
+  code converts that to the calendar day the value actually covers.
+  Instagram's daily numbers are fetched one day at a time because its
+  account metrics come back as a single total per requested window.
+- *Instagram follower history doesn't exist in the API.* Instagram only
+  reports today's count. The refresh saves one snapshot per run (so the
+  line builds from the day you start), and for the ~30 days before the
+  first snapshot it works backwards from Instagram's daily net follower
+  gains — that part is drawn dotted and labelled estimated. This
+  depends on `data/` persisting between scheduled runs, the same as the
+  Square order cache.
+- *Instagram lookback.* Account-level daily metrics only go back about
+  30 days, so the first run backfills what Meta allows (it stops early
+  after a few refused days) and the history grows daily from there.
+- *Posts.* Likes and comment counts come from the post itself; reach,
+  views, saves, shares and interactions from its insights. Stories
+  aren't in the media list Meta returns, so they aren't included.
+- *Token.* A Page token made from a long-lived user token doesn't expire
+  on a timer, but Meta can still revoke it (changing your Facebook
+  password, removing the app, or the app losing access). If the refresh
+  log starts showing "Meta rejected the token", re-run
+  `meta_make_permanent_token.py`.
+- *Workflow.* `META_PAGE_TOKEN` must be available to the step that runs
+  `fetch_data.py` — use job-level `env:` as with the other secrets.
 
 ## Extending it
 

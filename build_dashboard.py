@@ -18,6 +18,7 @@ from customer_report_tab import build_customer_report_section
 from forecast_tab import build_forecast_section
 from growth_efficiency_tab import build_growth_efficiency_section
 from square_tab import build_square_section
+from social_tab import build_social_section
 
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -121,6 +122,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <button class="tab-btn" type="button" data-tab="forecast">Forecast</button>
   <button class="tab-btn" type="button" data-tab="growth-efficiency">Growth &amp; Efficiency</button>
   <button class="tab-btn" type="button" data-tab="square">Square</button>
+  <button class="tab-btn" type="button" data-tab="social">Social</button>
 </div>
 
 <div class="tab-panel" id="tab-orders" data-tab-panel="orders">{orders_html}</div>
@@ -130,6 +132,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <div class="tab-panel" id="tab-forecast" data-tab-panel="forecast" hidden>{forecast_html}</div>
 <div class="tab-panel" id="tab-growth-efficiency" data-tab-panel="growth-efficiency" hidden>{growth_efficiency_html}</div>
 <div class="tab-panel" id="tab-square" data-tab-panel="square" hidden>{square_html}</div>
+<div class="tab-panel" id="tab-social" data-tab-panel="social" hidden>{social_html}</div>
 
 <script>
 (function() {{
@@ -181,6 +184,10 @@ def main():
     square_orders_df = load_csv("square_orders")
     square_catalog_df = load_csv("square_catalog")
     square_locations_df = load_csv("square_locations")
+    social_fb_df = load_csv("social_fb_daily")
+    social_ig_df = load_csv("social_ig_daily")
+    social_followers_df = load_csv("social_ig_followers")
+    social_posts_df = load_csv("social_ig_posts")
 
     generated_at_et = pd.Timestamp.now(tz="UTC").tz_convert("America/New_York").strftime("%Y-%m-%d %H:%M %Z")
 
@@ -196,6 +203,7 @@ def main():
         forecast_html=build_forecast_section(fulfillments_df, packagings_df, products_df, batches_df),
         growth_efficiency_html=build_growth_efficiency_section(),
         square_html=build_square_section(square_orders_df, square_locations_df, square_catalog_df),
+        social_html=build_social_section(social_fb_df, social_ig_df, social_followers_df, social_posts_df),
     )
 
     with open(config.OUTPUT_HTML, "w") as f:

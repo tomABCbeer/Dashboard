@@ -18,12 +18,15 @@ Usage:
 import os
 import sys
 import json
+import time
 
 import pandas as pd
 
 import config
 from breww_client import BrewwClient, BrewwAPIError
 from square_client import SquareClient, SquareAPIError
+from meta_client import MetaClient, MetaAPIError
+from datetime import date, timedelta
 
 
 def flatten(records):
@@ -171,6 +174,144 @@ def fetch_square_data(results):
     results.append(("square_orders", "ok", f"{len(merged_df)} rows cached"))
 
 
+def _since_date(existing_df, buffer_days, backfill_days):
+    """Where a date-keyed pull should start: the day after nothing (a full
+    backfill) if there's no cache yet, otherwise buffer_days before the
+    newest cached date, so recent days Meta is still finalizing get
+    re-checked and replaced."""
+    today = date.today()
+    if existing_df is not None and "date" in existing_df.columns:
+        newest = pd.to_datetime(existing_df["date"], errors="coerce").max()
+        if pd.notna(newest):
+            return max(newest.date() - timedelta(days=buffer_days), today - timedelta(days=backfill_days))
+    return today - timedelta(days=backfill_days)
+
+
+def _save_date_keyed(path, new_rows, existing_df):
+    new_df = pd.DataFrame(new_rows)
+    merged = merge_cache(existing_df, new_df, id_col="date")
+    if "date" in merged.columns:
+        merged = merged.sort_values("date")
+    merged.to_csv(path, index=False)
+    return new_df, merged
+
+
+def fetch_meta_data(results):
+    """Pull Facebook Page and Instagram data for the Social tab. Each
+    piece (Facebook daily, Instagram daily, Instagram follower snapshot,
+    Instagram posts) is fetched and cached independently, so one failing
+    - e.g. a metric Meta retires - never costs the others.
+
+    Not configured (no META_PAGE_TOKEN) is a skip, not a failure."""
+    if not config.META_PAGE_TOKEN:
+        print("No META_PAGE_TOKEN set - skipping Facebook/Instagram data (see README, Social tab).")
+        return
+
+    try:
+        client = MetaClient()
+        acct = client.get_account()
+    except MetaAPIError as e:
+        print(f"Meta setup problem: {e}")
+        results.append(("meta_account", "skipped", str(e)))
+        return
+    print(f"Meta: Page '{acct['page_name']}'" + (f", Instagram @{acct['ig_username']}" if acct["ig_id"] else ", no Instagram account linked"))
+
+    # --- Facebook daily ---
+    fb_path = os.path.join(config.DATA_DIR, "social_fb_daily.csv")
+    try:
+        existing = load_cache(fb_path)
+        since = _since_date(existing, config.META_INCREMENTAL_BUFFER_DAYS, config.META_FB_BACKFILL_DAYS)
+        print(f"Fetching Facebook daily metrics from {since} ...")
+        rows = client.fb_daily(acct["page_id"], since, date.today())
+        new_df, merged = _save_date_keyed(fb_path, rows, existing)
+        print(f"  {len(new_df)} days fetched -> {len(merged)} total cached in {fb_path}")
+        results.append(("meta_fb_daily", "ok", f"{len(merged)} rows cached"))
+    except MetaAPIError as e:
+        print(f"  Skipped Facebook daily: {e}")
+        results.append(("meta_fb_daily", "skipped", str(e)))
+
+    if not acct["ig_id"]:
+        return
+
+    # --- Instagram follower snapshot (Instagram only reports today's count) ---
+    snap_path = os.path.join(config.DATA_DIR, "social_ig_followers.csv")
+    try:
+        snap = client.ig_snapshot(acct["ig_id"])
+        today_et = pd.Timestamp.now(tz="UTC").tz_convert("America/New_York").strftime("%Y-%m-%d")
+        existing = load_cache(snap_path)
+        _, merged = _save_date_keyed(
+            snap_path, [{"date": today_et, **snap}], existing)
+        print(f"  Instagram followers today: {snap['followers_count']} ({len(merged)} daily snapshots cached)")
+        results.append(("meta_ig_followers", "ok", f"{len(merged)} snapshots cached"))
+    except MetaAPIError as e:
+        print(f"  Skipped Instagram follower snapshot: {e}")
+        results.append(("meta_ig_followers", "skipped", str(e)))
+
+    # --- Instagram daily ---
+    ig_path = os.path.join(config.DATA_DIR, "social_ig_daily.csv")
+    try:
+        existing = load_cache(ig_path)
+        since = _since_date(existing, config.META_INCREMENTAL_BUFFER_DAYS, config.META_IG_BACKFILL_DAYS)
+        yesterday = date.today() - timedelta(days=1)  # today is still incomplete
+        print(f"Fetching Instagram daily metrics from {since} ...")
+        rows = client.ig_daily(acct["ig_id"], since, yesterday)
+        gains = client.ig_follower_gain(acct["ig_id"])
+        for r in rows:
+            if r["date"] in gains:
+                r["follower_gain"] = gains[r["date"]]
+        new_df, merged = _save_date_keyed(ig_path, rows, existing)
+        print(f"  {len(new_df)} days fetched -> {len(merged)} total cached in {ig_path}")
+        results.append(("meta_ig_daily", "ok", f"{len(merged)} rows cached"))
+    except MetaAPIError as e:
+        print(f"  Skipped Instagram daily: {e}")
+        results.append(("meta_ig_daily", "skipped", str(e)))
+
+    # --- Instagram posts ---
+    posts_path = os.path.join(config.DATA_DIR, "social_ig_posts.csv")
+    try:
+        existing = load_cache(posts_path)
+        refresh_cutoff = (date.today() - timedelta(days=config.META_POST_REFRESH_DAYS)).isoformat()
+        print("Fetching Instagram posts" + (f" (refreshing numbers for posts since {refresh_cutoff})" if existing is not None else " (full history - first run)") + " ...")
+        posts = client.ig_media(acct["ig_id"], stop_before=refresh_cutoff if existing is not None else None)
+        have_insights = set()
+        if existing is not None and "reach" in existing.columns:
+            have_insights = set(existing.loc[existing["reach"].notna(), "id"].astype(str))
+        rows = []
+        for p in posts:
+            ts = (p.get("timestamp") or "")[:10]
+            row = {
+                "id": str(p["id"]), "timestamp": p.get("timestamp"),
+                "media_type": p.get("media_type"), "product_type": p.get("media_product_type"),
+                "permalink": p.get("permalink"),
+                "caption": (p.get("caption") or "")[:140].replace("\n", " "),
+                "like_count": p.get("like_count"), "comments_count": p.get("comments_count"),
+            }
+            if ts >= refresh_cutoff or str(p["id"]) not in have_insights:
+                try:
+                    row.update(client.ig_post_insights(p["id"]))
+                except MetaAPIError as e:
+                    if "rejected the token" in str(e):
+                        raise
+                time.sleep(0.15)
+            else:
+                prev = existing[existing["id"].astype(str) == str(p["id"])]
+                if not prev.empty:
+                    for k in ("reach", "views", "saved", "shares", "total_interactions"):
+                        if k in prev.columns:
+                            row[k] = prev.iloc[0][k]
+            rows.append(row)
+        new_df = pd.DataFrame(rows)
+        merged = merge_cache(existing, new_df, id_col="id")
+        if "timestamp" in merged.columns:
+            merged = merged.sort_values("timestamp")
+        merged.to_csv(posts_path, index=False)
+        print(f"  {len(new_df)} posts fetched/refreshed -> {len(merged)} total cached in {posts_path}")
+        results.append(("meta_ig_posts", "ok", f"{len(merged)} rows cached"))
+    except MetaAPIError as e:
+        print(f"  Skipped Instagram posts: {e}")
+        results.append(("meta_ig_posts", "skipped", str(e)))
+
+
 def main():
     os.makedirs(config.DATA_DIR, exist_ok=True)
 
@@ -228,6 +369,7 @@ def main():
         results.append((name, "ok", f"{len(merged_df)} rows cached"))
 
     fetch_square_data(results)
+    fetch_meta_data(results)
 
     any_success = any(status == "ok" for _, status, _ in results)
 

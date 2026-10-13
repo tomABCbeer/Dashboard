@@ -80,6 +80,37 @@ SQUARE_ORDER_STATES = ["COMPLETED"]
 # years of history to be sitting in every page load.
 SQUARE_EMBED_DAYS = 90
 
+# --- Meta (Facebook + Instagram, for the Social tab) ------------------------
+# A Page access token that does not expire, made by running
+# meta_make_permanent_token.py once (see the README's Social tab section):
+#
+#     META_PAGE_TOKEN=EAAB...
+#
+# It is read-only in practice (this dashboard only ever sends GET
+# requests) and is limited to the Page you picked plus its linked
+# Instagram account. If it's not set, the Social tab shows a "not
+# connected" message and nothing else is affected.
+META_PAGE_TOKEN = os.environ.get("META_PAGE_TOKEN", "")
+
+# Graph API versions are supported for roughly two years each; bump this
+# if Meta ever retires it.
+META_API_VERSION = os.environ.get("META_API_VERSION", "v23.0")
+
+# How far back the FIRST pull goes (no cache yet). Facebook's daily
+# metrics reach back a long way; Instagram's account-level daily metrics
+# only reach back about 30 days, so a bigger number there just stops
+# early once Meta refuses older days. Later runs only re-fetch the last
+# META_INCREMENTAL_BUFFER_DAYS days (recent days are still being
+# finalized by Meta, so they get re-checked each run).
+META_FB_BACKFILL_DAYS = 365
+META_IG_BACKFILL_DAYS = 30
+META_INCREMENTAL_BUFFER_DAYS = 7
+
+# Instagram post numbers (reach, views, likes...) keep growing for days
+# after posting, so posts newer than this are re-fetched every run;
+# older ones are treated as settled and kept as cached.
+META_POST_REFRESH_DAYS = 45
+
 # --- Which data to pull -------------------------------------------------
 # Endpoint paths are taken directly from Breww's published OpenAPI spec
 # (orders_list, drink_batches_list, stock_received_list operations).
