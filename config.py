@@ -229,14 +229,13 @@ ENDPOINTS = {
     "drink_batch_actions": {
         "enabled": True,
         "path": "/drink-batch-actions/",
-        # Packaging on-site events (action_type 5) for the Production
-        # tab's Batch Packaging table. Filtered server-side so only
-        # packaging events are pulled. datetime_done is when the
-        # packaging happened; the buffer re-checks recent events in
-        # case a record is edited after the fact.
-        "incremental_field": "datetime_done",
-        "buffer_days": 14,
-        "extra_params": {"action_type": 5},
+        # Batch history for the Production tab's Batch Packaging table:
+        # on-site packaging (type 5) AND off-site packaging received
+        # (type 7, used for contract brews). The whole endpoint is only
+        # a few hundred rows, so it is always pulled in full - that
+        # also picks up any edits to older records.
+        "incremental_field": None,
+        "buffer_days": 0,
     },
     "container_types": {
         "enabled": True,

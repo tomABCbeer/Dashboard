@@ -1,7 +1,8 @@
 """Production tab: batch packaging table.
 
 One row per batch + packaged date + package type, built from Breww's
-on-site packaging records (/drink-batch-actions/, action_type 5).
+on-site (type 5) and off-site received (type 7) packaging records
+from /drink-batch-actions/.
 Breww doesn't return a package COUNT on those records, so the count is
 derived: litres packaged / litres per package (the product's gross
 liquid volume). If the division isn't close to a whole number (part-
@@ -13,7 +14,8 @@ import pandas as pd
 
 from shared import json_safe
 
-PACKAGING_ACTION_TYPE = 5
+# 5 = packaged on-site, 7 = packaged off-site (contract brews) and received
+PACKAGING_ACTION_TYPES = (5, 7)
 
 
 def _num(v):
@@ -27,7 +29,7 @@ def build_packaging_records(actions_df, batches_df, container_types_df):
         return []
     a = actions_df.copy()
     if "action_type" in a.columns:
-        a = a[pd.to_numeric(a["action_type"], errors="coerce") == PACKAGING_ACTION_TYPE]
+        a = a[pd.to_numeric(a["action_type"], errors="coerce").isin(PACKAGING_ACTION_TYPES)]
 
     refs = {}
     if batches_df is not None and "id" in batches_df.columns and "batch_ref" in batches_df.columns:
@@ -47,17 +49,27 @@ def build_packaging_records(actions_df, batches_df, container_types_df):
             continue
         day = done.tz_convert("America/New_York").strftime("%Y-%m-%d")
         vol = _num(r.get("volume_successful.litre")) or 0.0
-        per = _num(r.get("initial_product.liquid_volume_gross")) or _num(r.get("initial_product.liquid_volume_taxable"))
-        ct_id = _num(r.get("container_type"))
-        pkg = ct_names.get(int(ct_id)) if ct_id is not None else None
-        pkg = pkg or json_safe(r.get("initial_product.name")) or "Unknown"
+        per = (_num(r.get("initial_product.liquid_volume_gross.litre"))
+               or _num(r.get("initial_product.liquid_volume_taxable.litre")))
+        beer = json_safe(r.get("drink_batch.drink.name"))
+        pid = _num(r.get("initial_product.id"))
+        # Package type = the product's own name, minus the leading beer
+        # name ("My New GF - 24 x 16oz Can" -> "24 x 16oz Can"). Not the
+        # container type: different sizes can share one container type.
+        pkg = json_safe(r.get("initial_product.name"))
+        if pkg and beer and pkg.startswith(beer + " - "):
+            pkg = pkg[len(beer) + 3:]
+        if not pkg:
+            ct_id = _num(r.get("container_type"))
+            pkg = ct_names.get(int(ct_id)) if ct_id is not None else None
+        pkg = pkg or "Unknown"
         batch_id = _num(r.get("drink_batch.id"))
-        key = (batch_id, day, pkg, per)
+        key = (batch_id, day, pid if pid is not None else pkg)
         g = groups.setdefault(key, {
             "batch_code": json_safe(r.get("drink_batch.batch_code")),
             "batch_ref": refs.get(int(batch_id)) if batch_id is not None else None,
             "date": day,
-            "beer": json_safe(r.get("drink_batch.drink.name")),
+            "beer": beer,
             "package": pkg,
             "volume": 0.0,
             "per": per,

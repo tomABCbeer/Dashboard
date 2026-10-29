@@ -1,0 +1,273 @@
+{
+  "actions_all": 415,
+  "actions_by_type": {
+    "1": 47,
+    "2": 47,
+    "3": 2,
+    "4": 2,
+    "5": 62,
+    "6": 0,
+    "7": 132,
+    "8": 8,
+    "9": 50,
+    "10": 2,
+    "11": 63,
+    "12": 0,
+    "13": 0,
+    "14": 0
+  },
+  "batches_total": 116,
+  "batches_by_status": {
+    "1": 6,
+    "2": 1,
+    "3": 109
+  },
+  "missing_count": 74,
+  "missing_sample": [
+    {
+      "id": 581826,
+      "batch_code": "25084",
+      "drink.name": "Spy-P-A",
+      "datetime_started": "2026-10-06T14:42:00+01:00",
+      "status": 2
+    },
+    {
+      "id": 549380,
+      "batch_code": "25083",
+      "drink.name": "Reverse Swirly",
+      "datetime_started": "2026-10-05T16:16:00+01:00",
+      "status": 2
+    },
+    {
+      "id": 541950,
+      "batch_code": "25082",
+      "drink.name": "Marleys Ghost",
+      "datetime_started": "2026-10-01T18:18:00+01:00",
+      "status": 2
+    },
+    {
+      "id": 585044,
+      "batch_code": "25080",
+      "drink.name": "Seltz",
+      "datetime_started": "2026-09-22T15:06:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 570510,
+      "batch_code": "25081",
+      "drink.name": "Presita",
+      "datetime_started": "2026-09-17T15:58:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 582971,
+      "batch_code": "25079",
+      "drink.name": "Seltz",
+      "datetime_started": "2026-09-16T15:39:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 549379,
+      "batch_code": "25078",
+      "drink.name": "Bike Path",
+      "datetime_started": "2026-09-10T18:10:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 559072,
+      "batch_code": "25077",
+      "drink.name": "Spy-P-A",
+      "datetime_started": "2026-09-03T14:57:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 570507,
+      "batch_code": "25075",
+      "drink.name": "My Juicy GF",
+      "datetime_started": "2026-08-31T14:56:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 549377,
+      "batch_code": "25074",
+      "drink.name": "Russell",
+      "datetime_started": "2026-08-13T15:45:00+01:00",
+      "status": 2
+    },
+    {
+      "id": 541949,
+      "batch_code": "25072",
+      "drink.name": "Zwolf",
+      "datetime_started": "2026-08-06T14:53:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 559071,
+      "batch_code": "25071",
+      "drink.name": "Oval Frame",
+      "datetime_started": "2026-07-29T14:53:00+01:00",
+      "status": 2
+    },
+    {
+      "id": 561247,
+      "batch_code": "25066",
+      "drink.name": "Super Seltz",
+      "datetime_started": "2026-07-13T21:59:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 549376,
+      "batch_code": "25068",
+      "drink.name": "Pomellow",
+      "datetime_started": "2026-07-13T13:56:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 549374,
+      "batch_code": "25064",
+      "drink.name": "My Juicy GF",
+      "datetime_started": "2026-07-06T16:52:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 559074,
+      "batch_code": "25063",
+      "drink.name": "Seltz",
+      "datetime_started": "2026-07-02T17:40:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 552214,
+      "batch_code": "25061",
+      "drink.name": "Trafford",
+      "datetime_started": "2026-06-25T19:03:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 547875,
+      "batch_code": "25060",
+      "drink.name": "Presita",
+      "datetime_started": "2026-06-22T19:02:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 549369,
+      "batch_code": "25058",
+      "drink.name": "Spy-P-A",
+      "datetime_started": "2026-06-19T15:23:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 553643,
+      "batch_code": "25055",
+      "drink.name": "Seltz",
+      "datetime_started": "2026-06-15T14:18:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 549278,
+      "batch_code": "25056",
+      "drink.name": "Pomellow",
+      "datetime_started": "2026-06-10T21:20:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 537354,
+      "batch_code": "25057",
+      "drink.name": "Spy-P-A",
+      "datetime_started": "2026-06-03T21:21:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 549314,
+      "batch_code": "25051",
+      "drink.name": "Seltz",
+      "datetime_started": "2026-05-27T16:37:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 537353,
+      "batch_code": "25050",
+      "drink.name": "Spy-P-A",
+      "datetime_started": "2026-05-20T20:55:00+01:00",
+      "status": 3
+    },
+    {
+      "id": 542290,
+      "batch_code": "25046",
+      "drink.name": "Seltz",
+      "datetime_started": "2026-05-06T19:56:00+01:00",
+      "status": 3
+    }
+  ],
+  "missing_detail": {
+    "25084": [
+      {
+        "type": 7,
+        "done": "2026-10-27T18:30:00Z",
+        "product": "Spy-P-A - 24 x 16oz Can",
+        "litres": 1589.8745
+      },
+      {
+        "type": 7,
+        "done": "2026-10-27T18:29:00Z",
+        "product": "Spy-P-A - 1/6BBL Keg",
+        "litres": 391.167
+      },
+      {
+        "type": 7,
+        "done": "2026-10-27T18:29:00Z",
+        "product": "Spy-P-A - 1/2BBL Keg",
+        "litres": 1408.1732
+      },
+      {
+        "type": 11,
+        "done": "2026-10-06T14:42:00+01:00",
+        "product": null,
+        "litres": 3520.433
+      }
+    ],
+    "25083": [
+      {
+        "type": 11,
+        "done": "2026-10-05T16:16:00+01:00",
+        "product": null,
+        "litres": 1760.2165
+      }
+    ],
+    "25082": [
+      {
+        "type": 7,
+        "done": "2026-10-26T18:17:00Z",
+        "product": "Marleys Ghost - 24 x 16oz Can",
+        "litres": 2725.4957
+      },
+      {
+        "type": 7,
+        "done": "2026-10-26T18:16:00Z",
+        "product": "Marleys Ghost - 1/6BBL Keg",
+        "litres": 195.5835
+      },
+      {
+        "type": 11,
+        "done": "2026-10-01T18:18:00+01:00",
+        "product": null,
+        "litres": 3520.433
+      }
+    ],
+    "25080": [
+      {
+        "type": 7,
+        "done": "2026-09-22T15:06:00+01:00",
+        "product": "Seltz - 1/2BBL Keg",
+        "litres": 58.6739
+      },
+      {
+        "type": 11,
+        "done": "2026-09-22T15:06:00+01:00",
+        "product": null,
+        "litres": 58.6739
+      }
+    ]
+  }
+}
