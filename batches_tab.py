@@ -7,10 +7,11 @@ import json
 import pandas as pd
 
 import config
+from packaging_tab import build_packaging_section
 from shared import json_safe
 
 
-def build_batches_section(df):
+def build_batches_section(df, actions_df=None, container_types_df=None):
     if df is None:
         return "<h2>Production</h2><p class='missing'>No cached data yet - run fetch_data.py first.</p>"
 
@@ -41,8 +42,12 @@ def build_batches_section(df):
         })
     records_json = json.dumps(records, allow_nan=False)
 
+    packaging_html = build_packaging_section(actions_df, df, container_types_df)
+
     return f"""
 <h2>Production</h2>
+
+{packaging_html}
 
 <h3>Recent Batches</h3>
 <p class="section-note">Every batch, all-time. Click any column header to sort.</p>

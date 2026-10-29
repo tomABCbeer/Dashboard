@@ -226,6 +226,26 @@ ENDPOINTS = {
         "incremental_field": "created_at",
         "buffer_days": 30,
     },
+    "drink_batch_actions": {
+        "enabled": True,
+        "path": "/drink-batch-actions/",
+        # Packaging on-site events (action_type 5) for the Production
+        # tab's Batch Packaging table. Filtered server-side so only
+        # packaging events are pulled. datetime_done is when the
+        # packaging happened; the buffer re-checks recent events in
+        # case a record is edited after the fact.
+        "incremental_field": "datetime_done",
+        "buffer_days": 14,
+        "extra_params": {"action_type": 5},
+    },
+    "container_types": {
+        "enabled": True,
+        "path": "/container-types/",
+        # Small reference list (keg/can/cask sizes) used to name the
+        # package type in the Batch Packaging table.
+        "incremental_field": None,
+        "buffer_days": 0,
+    },
     "customers_suppliers": {
         "enabled": True,
         "path": "/customers-suppliers/",

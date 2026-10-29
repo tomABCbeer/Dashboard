@@ -181,6 +181,8 @@ def main():
     fulfillments_df = load_csv("fulfillments")
     packagings_df = load_csv("planned_packagings")
     customers_df = load_csv("customers_suppliers")
+    batch_actions_df = load_csv("drink_batch_actions")
+    container_types_df_ = load_csv("container_types")
     square_orders_df = load_csv("square_orders")
     square_catalog_df = load_csv("square_catalog")
     square_locations_df = load_csv("square_locations")
@@ -197,7 +199,7 @@ def main():
         product_color_overrides_json=json.dumps(config.PRODUCT_COLORS),
         product_drink_map_json=json.dumps(build_product_drink_map(products_df, build_drink_id_name_map(drinks_df))),
         orders_html=build_orders_section(orders_df, customer_types_df, order_lines_df, products_df),
-        batches_html=build_batches_section(batches_df),
+        batches_html=build_batches_section(batches_df, batch_actions_df, container_types_df_),
         stock_html=build_stock_section(stock_df, products_df),
         customer_report_html=build_customer_report_section(customers_df),
         forecast_html=build_forecast_section(fulfillments_df, packagings_df, products_df, batches_df),
